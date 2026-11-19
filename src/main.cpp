@@ -236,21 +236,22 @@ bool IsSeelenRunning() {
 
 void OfferSeelenIntegration(bool fromMenu = false) {
     if ((!fromMenu && g_seelenPrompted) || !IsSeelenRunning()) return;
-    g_seelenPrompted = true;
-    SaveBoolSetting(L"SeelenIntegrationPrompted", true);
 
-    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"View Seelen build" }, { IDNO, L"Not now" }};
+    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Download Seelen version" }, { IDNO, L"Not now" }};
     TASKDIALOGCONFIG dialog{ sizeof(dialog) };
     dialog.hwndParent = g_hwnd;
     dialog.pszWindowTitle = kAppName;
     dialog.pszMainInstruction = L"Seelen UI detected";
-    dialog.pszContent = L"BatteryHub can show your device battery levels in Seelen UI's Fancy Toolbar.\n\nThis feature requires this fork's Seelen-enabled build.";
+    dialog.pszContent = L"BatteryHub can display battery levels in Seelen UI's Fancy Toolbar using an optional, unofficial integration build.\n\nThe Seelen version is provided by the ISOByte00 experimental fork.";
     dialog.pButtons = buttons;
     dialog.cButtons = ARRAYSIZE(buttons);
     dialog.nDefaultButton = IDNO;
-    dialog.pszFooter = L"This is not an official BatteryHub release. BatteryHub never downloads or runs a file automatically.";
+    dialog.pszFooter = L"This is not an official BatteryHub release. BatteryHub never runs a downloaded file without your confirmation.";
     int choice = IDNO;
-    TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
+    HRESULT shown = TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
+    if (FAILED(shown) || (choice != IDYES && choice != IDNO)) return;
+    g_seelenPrompted = true;
+    SaveBoolSetting(L"SeelenIntegrationPrompted", true);
     if (choice == IDYES)
         ShellExecuteW(nullptr, L"open", L"https://github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases", nullptr, nullptr, SW_SHOWNORMAL);
 }
