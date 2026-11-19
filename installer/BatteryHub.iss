@@ -62,7 +62,7 @@ Name: "{autoprograms}\BatteryHub"; Filename: "{app}\BatteryHub.exe"
 Filename: "{app}\BatteryHub.exe"; Description: "Start BatteryHub now"; Flags: nowait postinstall skipifsilent; Check: not IsUpdate
 Filename: "https://ko-fi.com/krisgfx"; Description: "Enjoying BatteryHub? Support it on Ko-fi"; Flags: shellexec postinstall unchecked skipifsilent nowait runasoriginaluser
 #if SeelenBuild
-Filename: "https://seelen.io/resources/review/FnhWFEKvR0WJ-RJW4_nmQQ"; Description: "Open Seelen UI plugin page"; Flags: shellexec postinstall checked skipifsilent nowait runasoriginaluser; Check: not IsUpdate
+Filename: "https://seelen.io/resources/review/FnhWFEKvR0WJ-RJW4_nmQQ"; Description: "Open Seelen UI plugin page"; Flags: shellexec postinstall skipifsilent nowait runasoriginaluser; Check: not IsUpdate
 #endif
 
 [UninstallRun]
