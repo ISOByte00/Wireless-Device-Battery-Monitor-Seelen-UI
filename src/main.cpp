@@ -1,9 +1,11 @@
 // BatteryHub - tray app showing the battery level of wireless mice, headsets and Bluetooth devices.
 #include <windows.h>
 #include <shellapi.h>
+#include <commctrl.h>
 #include <dbt.h>
 #include <initguid.h>
 #include <hidclass.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <atomic>
@@ -47,7 +49,7 @@ enum MenuId : UINT {
     ID_REFRESH = 100, ID_AUTOSTART, ID_HIDE_LAST_KNOWN, ID_WIDGET_BACKGROUND, ID_EXIT, ID_MODE_WIDGET, ID_MODE_TRAY, ID_SUPPORT, ID_REPORT,
     ID_BRAND_COLORS, ID_STACKED, ID_SHOW_DISCONNECTED, ID_RECORD_HISTORY,
     ID_POLL_FIRST = 500,  // "Check battery every": ID_POLL_FIRST + 0..7
-    ID_UPDATE = 200, ID_AUTO_UPDATE,
+    ID_UPDATE = 200, ID_AUTO_UPDATE, ID_SEELEN_INTEGRATION,
     ID_LANG_AUTO = 400, ID_LANG_ADD, ID_LANG_FIRST,  // "Language": ID_LANG_FIRST + 0..63
     ID_MONITOR_ALL = 300, ID_MONITOR_MAIN, ID_MONITOR_FIRST,  // "Show the widget on": ID_MONITOR_FIRST + 0..31
     ID_DEVICE_FIRST = 1000
@@ -77,6 +79,7 @@ std::wstring g_widgetMonitor = L"all";  // which taskbars show the widget: "all"
 bool g_widgetBackground = false;  // draw a plate behind the taskbar text (transparent taskbar themes)
 bool g_stacked = false;      // icon above the percentage (menu option)
 bool g_brandColors = false;  // off by default; known brands get their color (Razer green, Logitech blue, ...)
+bool g_seelenPrompted = false;
 std::atomic<DWORD> g_pollIntervalMs{ 60 * 1000 };  // set from the menu, read by the worker thread
 
 struct TrayEntry {
@@ -212,6 +215,44 @@ bool LoadBoolSetting(const wchar_t* name, bool defaultVal) {
 void SaveBoolSetting(const wchar_t* name, bool on) {
     DWORD v = on ? 1 : 0;
     RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, name, REG_DWORD, &v, sizeof(v));
+}
+
+bool IsSeelenRunning() {
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W process{ sizeof(process) };
+    bool found = false;
+    if (Process32FirstW(snapshot, &process)) {
+        do {
+            if (_wcsicmp(process.szExeFile, L"seelen-ui.exe") == 0) {
+                found = true;
+                break;
+            }
+        } while (Process32NextW(snapshot, &process));
+    }
+    CloseHandle(snapshot);
+    return found;
+}
+
+void OfferSeelenIntegration(bool fromMenu = false) {
+    if ((!fromMenu && g_seelenPrompted) || !IsSeelenRunning()) return;
+    g_seelenPrompted = true;
+    SaveBoolSetting(L"SeelenIntegrationPrompted", true);
+
+    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"View Seelen build" }, { IDNO, L"Not now" }};
+    TASKDIALOGCONFIG dialog{ sizeof(dialog) };
+    dialog.hwndParent = g_hwnd;
+    dialog.pszWindowTitle = kAppName;
+    dialog.pszMainInstruction = L"Seelen UI detected";
+    dialog.pszContent = L"BatteryHub can show your device battery levels in Seelen UI's Fancy Toolbar.\n\nThis feature requires this fork's Seelen-enabled build.";
+    dialog.pButtons = buttons;
+    dialog.cButtons = ARRAYSIZE(buttons);
+    dialog.nDefaultButton = IDNO;
+    dialog.pszFooter = L"This is not an official BatteryHub release. BatteryHub never downloads or runs a file automatically.";
+    int choice = IDNO;
+    TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
+    if (choice == IDYES)
+        ShellExecuteW(nullptr, L"open", L"https://github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases", nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 // A REG_MULTI_SZ with one "device-key<TAB>threshold" entry per override.
@@ -855,6 +896,7 @@ void ShowMenu() {
     AppendMenuW(m, MF_STRING | (g_wantWidget ? MF_CHECKED : 0), ID_MODE_WIDGET, T(L"Show on the taskbar (icon + percentage)"));
     AppendMenuW(m, MF_STRING | (!g_wantWidget ? MF_CHECKED : 0), ID_MODE_TRAY, T(L"Show as tray icons"));
     CheckMenuRadioItem(m, ID_MODE_WIDGET, ID_MODE_TRAY, g_wantWidget ? ID_MODE_WIDGET : ID_MODE_TRAY, MF_BYCOMMAND);
+    AppendMenuW(m, MF_STRING, ID_SEELEN_INTEGRATION, L"Seelen UI integration...");
     UINT bgFlags = MF_STRING | (g_widgetBackground ? MF_CHECKED : 0) | (g_wantWidget ? 0 : MF_GRAYED);
     AppendMenuW(m, bgFlags, ID_WIDGET_BACKGROUND, T(L"Background behind taskbar text (for transparent taskbars)"));
     AppendMenuW(m, MF_STRING | (g_stacked ? MF_CHECKED : 0) | (g_wantWidget ? 0 : MF_GRAYED), ID_STACKED, T(L"Icons above percentages (narrower)"));
@@ -946,6 +988,7 @@ void ShowMenu() {
         case ID_STACKED: SetStacked(!g_stacked); break;
         case ID_MODE_WIDGET: SetMode(true); break;
         case ID_MODE_TRAY: SetMode(false); break;
+        case ID_SEELEN_INTEGRATION: OfferSeelenIntegration(true); break;
         case ID_SUPPORT: ShellExecuteW(nullptr, L"open", L"https://github.com/sponsors/krisgfx9", nullptr, nullptr, SW_SHOWNORMAL); break;
         case ID_REPORT: report::Show(g_inst, g_hwnd); break;
         case ID_UPDATE: updates::Activate(g_hwnd); break;
@@ -1269,6 +1312,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     g_widgetBackground = LoadWidgetBackground();
     g_brandColors = LoadBrandColors();
     g_stacked = LoadStacked();
+    g_seelenPrompted = LoadBoolSetting(L"SeelenIntegrationPrompted", false);
     g_pollIntervalMs = LoadPollSeconds() * 1000;
     widget::SetStacked(g_stacked);
     widget::SetBackground(g_widgetBackground);  // remembered by the widget across re-creation
@@ -1280,6 +1324,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     LoadAliases();
     LoadAlertThresholds();
     battery_history::Initialize(g_demo);
+    OfferSeelenIntegration();
     Reconcile();
     UpdatePlaceholder();  // something to click on until the first poll finishes
     SetTimer(g_hwnd, TIMER_WIDGET, 1000, nullptr);
