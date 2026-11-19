@@ -13,6 +13,9 @@
 #ifndef ArtifactPrefix
   #define ArtifactPrefix "BatteryHub-Standard"
 #endif
+#ifndef SeelenBuild
+  #define SeelenBuild 0
+#endif
 
 [Setup]
 AppId={{7E0B5C2A-3F4D-4C8E-9B61-2D5A8F1C4E93}
@@ -58,6 +61,9 @@ Name: "{autoprograms}\BatteryHub"; Filename: "{app}\BatteryHub.exe"
 [Run]
 Filename: "{app}\BatteryHub.exe"; Description: "Start BatteryHub now"; Flags: nowait postinstall skipifsilent; Check: not IsUpdate
 Filename: "https://ko-fi.com/krisgfx"; Description: "Enjoying BatteryHub? Support it on Ko-fi"; Flags: shellexec postinstall unchecked skipifsilent nowait runasoriginaluser
+#if SeelenBuild
+Filename: "https://seelen.io/resources/review/FnhWFEKvR0WJ-RJW4_nmQQ"; Description: "Open Seelen UI plugin page"; Flags: shellexec postinstall checked skipifsilent nowait runasoriginaluser; Check: not IsUpdate
+#endif
 
 [UninstallRun]
 Filename: "{app}\BatteryHub.exe"; Parameters: "--quit"; Flags: runhidden waituntilterminated; RunOnceId: "QuitApp"

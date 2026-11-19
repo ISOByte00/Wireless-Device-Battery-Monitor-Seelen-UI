@@ -34,7 +34,8 @@ $iscc = foreach ($v in 7, 6) {
 $iscc = $iscc | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $iscc) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
 if (-not $iscc) { throw "Inno Setup not found (https://jrsoftware.org/isdl.php)." }
-& $iscc "/DAppVersion=$Version" "/DArtifactPrefix=BatteryHub-$Flavor" "/DBuildExe=$sourceExePath" (Join-Path $PSScriptRoot "BatteryHub.iss")
+$seelenBuild = if ($Flavor -eq 'Seelen') { 1 } else { 0 }
+& $iscc "/DAppVersion=$Version" "/DArtifactPrefix=BatteryHub-$Flavor" "/DSeelenBuild=$seelenBuild" "/DBuildExe=$sourceExePath" (Join-Path $PSScriptRoot "BatteryHub.iss")
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed." }
 
 # Portable zip: same files, no installer.
