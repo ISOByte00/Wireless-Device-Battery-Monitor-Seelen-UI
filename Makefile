@@ -12,7 +12,7 @@ LIBS     := -lhid -lsetupapi -lcfgmgr32 -lole32 -loleaut32 -lcomctl32 -lgdi32 -l
 
 SRC := $(filter-out src/seelen_bridge.cpp,$(wildcard src/*.cpp)) $(wildcard src/drivers/*.cpp)
 ifeq ($(SEELEN_INTEGRATION),1)
-CXXFLAGS += -DSEELEN_INTEGRATION -Ithird-party/seelen-ui/bridge
+CXXFLAGS += -DSEELEN_INTEGRATION -Isrc -Ithird-party/seelen-ui/bridge
 SRC += third-party/seelen-ui/bridge/seelen_bridge.cpp
 endif
 OBJ := $(patsubst src/%.cpp,build/%.o,$(SRC)) build/app_res.o
