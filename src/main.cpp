@@ -235,21 +235,31 @@ bool IsSeelenRunning() {
 }
 
 void OfferSeelenIntegration(bool fromMenu = false) {
-    if ((!fromMenu && g_seelenPrompted) || !IsSeelenRunning()) return;
+    bool seelenRunning = IsSeelenRunning();
+    if (!fromMenu && (g_seelenPrompted || !seelenRunning)) return;
 
     TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Download Seelen version" }, { IDNO, L"Not now" }};
     TASKDIALOGCONFIG dialog{ sizeof(dialog) };
-    dialog.hwndParent = g_hwnd;
+    // g_hwnd is deliberately hidden; an invisible owner can leave TaskDialog behind
+    // the foreground window.  Use no owner so the prompt is always foreground-visible.
+    dialog.hwndParent = nullptr;
     dialog.pszWindowTitle = kAppName;
-    dialog.pszMainInstruction = L"Seelen UI detected";
-    dialog.pszContent = L"BatteryHub can display battery levels in Seelen UI's Fancy Toolbar using an optional, unofficial integration build.\n\nThe Seelen version is provided by the ISOByte00 experimental fork.";
+    dialog.pszMainInstruction = seelenRunning ? L"Seelen UI detected" : L"Seelen UI was not detected";
+    dialog.pszContent = seelenRunning
+        ? L"BatteryHub can display battery levels in Seelen UI's Fancy Toolbar using an optional, unofficial integration build.\n\nThe Seelen version is provided by the ISOByte00 experimental fork."
+        : L"Seelen UI does not appear to be running, but you can still download the optional Seelen integration build.";
     dialog.pButtons = buttons;
     dialog.cButtons = ARRAYSIZE(buttons);
     dialog.nDefaultButton = IDNO;
     dialog.pszFooter = L"This is not an official BatteryHub release. BatteryHub never runs a downloaded file without your confirmation.";
     int choice = IDNO;
     HRESULT shown = TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
-    if (FAILED(shown) || (choice != IDYES && choice != IDNO)) return;
+    if (FAILED(shown)) {
+        MessageBoxW(nullptr, L"Could not show the Seelen UI integration dialog. Please try the menu again.", kAppName,
+                    MB_OK | MB_ICONERROR);
+        return;
+    }
+    if (choice != IDYES && choice != IDNO) return;
     g_seelenPrompted = true;
     SaveBoolSetting(L"SeelenIntegrationPrompted", true);
     if (choice == IDYES)
