@@ -1,6 +1,6 @@
 param(
     [string]$Version = '0.0.0',
-    [ValidateSet('dev', 'test', 'stable')][string]$Channel = 'dev'
+    [ValidateSet('dev', 'test', 'stable', 'seelen')][string]$Channel = 'dev'
 )
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {

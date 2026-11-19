@@ -4,6 +4,9 @@
 
 #include "seelen_bridge.h"
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -11,15 +14,35 @@
 
 namespace {
 
+constexpr unsigned short kTestPort = 47842;
+
+std::string GetStateOverHttp() {
+    SOCKET socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    assert(socket != INVALID_SOCKET);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(kTestPort);
+    assert(connect(socket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0);
+    const char request[] = "GET /seelen/state-text HTTP/1.1\r\nHost: 127.0.0.1:47842\r\nConnection: close\r\n\r\n";
+    assert(send(socket, request, (int)sizeof(request) - 1, 0) > 0);
+    std::string response;
+    char buffer[1024];
+    for (int read; (read = recv(socket, buffer, sizeof(buffer), 0)) > 0;)
+        response.append(buffer, read);
+    closesocket(socket);
+    return response;
+}
+
 void TestStartStopRestart() {
     std::cout << "Testing Start, Stop, and Restart state lifecycle..." << std::endl;
     assert(!seelen_bridge::IsRunning());
 
-    assert(seelen_bridge::Start(37842));
+    assert(seelen_bridge::Start(kTestPort));
     assert(seelen_bridge::IsRunning());
 
     // Calling Start again while running should return true
-    assert(seelen_bridge::Start(37842));
+    assert(seelen_bridge::Start(kTestPort));
 
     seelen_bridge::Stop();
     assert(!seelen_bridge::IsRunning());
@@ -28,7 +51,7 @@ void TestStartStopRestart() {
     seelen_bridge::Stop();
 
     // Restarting after Stop should succeed
-    assert(seelen_bridge::Start(37842));
+    assert(seelen_bridge::Start(kTestPort));
     assert(seelen_bridge::IsRunning());
     seelen_bridge::Stop();
     assert(!seelen_bridge::IsRunning());
@@ -198,7 +221,7 @@ void TestMalformedRequests() {
 void TestUpdateStateSerialization() {
     std::cout << "Testing Update() serialization and JSON fields..." << std::endl;
 
-    assert(seelen_bridge::Start(37842));
+    assert(seelen_bridge::Start(kTestPort));
 
     std::vector<seelen_bridge::Device> devs;
     seelen_bridge::Device mouse;
@@ -228,6 +251,9 @@ void TestUpdateStateSerialization() {
     devs.push_back(headset);
 
     seelen_bridge::Update(devs, true);
+    std::string httpResponse = GetStateOverHttp();
+    assert(httpResponse.find("HTTP/1.1 200 OK") != std::string::npos);
+    assert(httpResponse.find("Gaming Mouse") != std::string::npos);
 
     std::string req =
         "GET /seelen/state HTTP/1.1\r\n"

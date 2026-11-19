@@ -7,6 +7,12 @@
   #define AppVersion "1.0.0"
 #endif
 #define Root ".."
+#ifndef BuildExe
+  #define BuildExe "{#Root}\\BatteryHub.exe"
+#endif
+#ifndef ArtifactPrefix
+  #define ArtifactPrefix "BatteryHub-Standard"
+#endif
 
 [Setup]
 AppId={{7E0B5C2A-3F4D-4C8E-9B61-2D5A8F1C4E93}
@@ -23,7 +29,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir={#Root}\dist
-OutputBaseFilename=BatteryHub-Setup-{#AppVersion}
+OutputBaseFilename={#ArtifactPrefix}-Setup-{#AppVersion}
 SetupIconFile={#Root}\res\app.ico
 UninstallDisplayIcon={app}\BatteryHub.exe
 UninstallDisplayName=BatteryHub
@@ -36,7 +42,7 @@ CloseApplications=no
 Name: "autostart"; Description: "Start BatteryHub when I sign in to Windows"
 
 [Files]
-Source: "{#Root}\BatteryHub.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildExe}"; DestDir: "{app}"; DestName: "BatteryHub.exe"; Flags: ignoreversion
 Source: "{#Root}\third_party\headsetcontrol\headsetcontrol.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "{#Root}\installer\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
