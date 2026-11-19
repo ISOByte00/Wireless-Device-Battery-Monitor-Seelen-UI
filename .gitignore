@@ -6,3 +6,10 @@ dist/
 third_party/
 .claude/
 CLAUDE.md
+
+# Seelen UI plugin: generated bundle snapshots (timestamped YAML)
+seelen-plugin/bundle *.yml
+seelen-plugin/BatteryHub.yml
+
+# Logs and temp
+*.log

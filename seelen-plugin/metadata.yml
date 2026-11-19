@@ -1,0 +1,21 @@
+
+id: "@isobyte/batteryhub"
+
+metadata:
+  displayName: "BatteryHub"
+  description: "BatteryHub Fancy Toolbar module."
+  tags:
+    - toolbar
+
+icon: LuBatteryMedium
+target: "@seelen/fancy-toolbar"
+
+plugin:
+  scopes: []
+
+  remoteData:
+    batteryHub:
+      url: "http://127.0.0.1:37842/seelen/state-text"
+      updateIntervalSeconds: 3
+
+  template: !include plugin/template.js
