@@ -2,7 +2,7 @@
 // Tests start/stop, restart, HTTP GET state/state-text, 404, 405, Host header, CORS Origin,
 // timeouts, partial requests, status, timestamp, and device serialization.
 
-#include "../src/seelen_bridge.h"
+#include "seelen_bridge.h"
 
 #include <cassert>
 #include <iostream>
@@ -151,38 +151,26 @@ void TestCorsOriginValidation() {
     std::cout << "Testing CORS Origin validation..." << std::endl;
     std::string dummyJson = "{\"status\":\"ready\",\"devices\":[]}";
 
-    // Allowed Origin: tauri://localhost
+    // Only the documented Seelen webview origin is accepted.
     std::string reqTauri =
         "GET /seelen/state-text HTTP/1.1\r\n"
         "Host: 127.0.0.1:37842\r\n"
-        "Origin: tauri://localhost\r\n"
+        "Origin: http://tauri.localhost\r\n"
         "Connection: close\r\n\r\n";
     seelen_bridge::HttpResponse resTauri = seelen_bridge::HandleHttpRequest(reqTauri, dummyJson);
     assert(resTauri.statusCode == 200);
-    assert(resTauri.allowOrigin == "tauri://localhost");
-    assert(resTauri.rawResponse.find("Access-Control-Allow-Origin: tauri://localhost") != std::string::npos);
+    assert(resTauri.allowOrigin == "http://tauri.localhost");
+    assert(resTauri.rawResponse.find("Access-Control-Allow-Origin: http://tauri.localhost") != std::string::npos);
     assert(resTauri.rawResponse.find("Access-Control-Allow-Origin: *") == std::string::npos);
 
-    // Allowed Origin: http://localhost:3000
+    // Development and arbitrary localhost origins are not implicitly trusted.
     std::string reqLocal =
         "GET /seelen/state-text HTTP/1.1\r\n"
         "Host: 127.0.0.1:37842\r\n"
         "Origin: http://localhost:3000\r\n"
         "Connection: close\r\n\r\n";
     seelen_bridge::HttpResponse resLocal = seelen_bridge::HandleHttpRequest(reqLocal, dummyJson);
-    assert(resLocal.statusCode == 200);
-    assert(resLocal.allowOrigin == "http://localhost:3000");
-
-    // Allowed OPTIONS preflight
-    std::string reqOptions =
-        "OPTIONS /seelen/state-text HTTP/1.1\r\n"
-        "Host: 127.0.0.1:37842\r\n"
-        "Origin: http://tauri.localhost\r\n"
-        "Connection: close\r\n\r\n";
-    seelen_bridge::HttpResponse resOptions = seelen_bridge::HandleHttpRequest(reqOptions, dummyJson);
-    assert(resOptions.statusCode == 204);
-    assert(resOptions.allowOrigin == "http://tauri.localhost");
-    assert(resOptions.rawResponse.find("Access-Control-Allow-Methods:") != std::string::npos);
+    assert(resLocal.statusCode == 403);
 
     // Disallowed Origin (arbitrary web origin) -> 403 Forbidden
     std::string reqEvil =

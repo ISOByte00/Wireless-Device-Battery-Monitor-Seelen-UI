@@ -8,8 +8,8 @@ third_party/
 CLAUDE.md
 
 # Seelen UI plugin: generated bundle snapshots (timestamped YAML)
-seelen-plugin/bundle *.yml
-seelen-plugin/BatteryHub.yml
+third-party/seelen-ui/plugin/bundle *.yml
+third-party/seelen-ui/plugin/BatteryHub.yml
 
 # Logs and temp
 *.log

@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
 
-const templatePath = path.join(__dirname, "../seelen-plugin/plugin/template.js");
+const templatePath = path.join(__dirname, "../plugin/plugin/template.js");
 const templateCode = fs.readFileSync(templatePath, "utf-8");
 
 // Mock environment for Seelen UI

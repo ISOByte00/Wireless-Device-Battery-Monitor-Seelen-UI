@@ -5,20 +5,20 @@
 > This repository is an experimental fork of [BatteryHub](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) created to integrate BatteryHub with [Seelen UI](https://seelen.io)'s Fancy Toolbar.
 > - **Original Author:** [krisgfx9](https://github.com/krisgfx9) (All original credits, licenses, sponsorships, and documentation belong to the upstream project).
 > - **Status:** Experimental / In Development & Testing. This is **not** an official upstream BatteryHub release.
-> - **Requirements:** Requires this custom BatteryHub build alongside the Seelen UI BatteryHub plugin (`@isobyte/batteryhub`).
+> - **Seçimlik:** Standart derleme yalnızca Seelen UI'yi açılışta bir kez algılar; bridge, URL protokolü ve plugin desteği içermez.
 > - **Known Limitation:** In Seelen UI (v2.8.10 / v2.8.11), adding or managing external toolbar modules can occasionally trigger an upstream layout issue where previously configured modules disappear due to Seelen's `isStale` item pruning. Always backup your Seelen configuration (`state.yml`) before modifying toolbar items.
 
 ### Seelen UI Integration
 
-- **Architecture:** BatteryHub reads device battery levels using its existing native drivers without duplicate hardware polling.
-- **Local Bridge:** A secured loopback endpoint (`127.0.0.1:37842/seelen/state-text`) serves current device state in plain text / JSON.
+- **Standard build:** Seelen UI algılanırsa kullanıcıya Seelen derlemesinin GitHub Releases sayfası önerilir. Uygun bir Release yayımlanana kadar otomatik indirme ya da kurulum yapılmaz.
+- **Seelen build:** `make SEELEN_INTEGRATION=1` ile oluşturulur. Mevcut pil taramasını kullanır; yalnızca bu derlemede `127.0.0.1:37842/seelen/state-text` bridge'i ve `batteryhub://show-menu` protokolü bulunur.
 - **Protocol Launcher:** Clicking any device in the Seelen Fancy Toolbar triggers the `batteryhub://show-menu` protocol, activating the native menu on the running instance without starting a secondary process.
-- **Tested Seelen UI Versions:** Seelen UI v2.8.10 and v2.8.11.
+- **Known limitation:** Seelen UI'nin `isStale` toolbar temizleme davranışı Seelen tarafındadır; bu fork toolbar düzenini veya `state.yml` dosyasını değiştirmez.
 
 #### How to Enable
 1. Run BatteryHub.
-2. In the BatteryHub menu, toggle **"Show BatteryHub in Seelen toolbar"** (or run with `--seelen-server`).
-3. Place `seelen-plugin/BatteryHub.yaml` into your Seelen UI plugins directory (or import via Seelen UI Settings).
+2. Standart derlemede menüdeki **Seelen UI integration...** seçeneğiyle Releases sayfasına tekrar erişebilirsin. Seelen derlemesinde **Show BatteryHub in Seelen toolbar** seçeneğini aç.
+3. `third-party/seelen-ui/plugin/BatteryHub.yaml` dosyasını Seelen UI plugins dizinine koy (veya Seelen UI Settings'ten içe aktar).
 4. Add the `@isobyte/batteryhub` module to your Fancy Toolbar layout.
 
 #### Troubleshooting

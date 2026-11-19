@@ -1,6 +1,7 @@
 // BatteryHub - tray app showing the battery level of wireless mice, headsets and Bluetooth devices.
 #include <windows.h>
 #include <shellapi.h>
+#include <commctrl.h>
 #include <dbt.h>
 #include <initguid.h>
 #include <hidclass.h>
@@ -25,7 +26,9 @@
 #include "labels.h"
 #include "report.h"
 #include "rename_dialog.h"
+#if defined(SEELEN_INTEGRATION)
 #include "seelen_bridge.h"
+#endif
 #include "widget.h"
 #include "update_win.h"
 #include "update_apply.h"
@@ -79,11 +82,12 @@ std::wstring g_widgetMonitor = L"all";  // which taskbars show the widget: "all"
 bool g_widgetBackground = false;  // draw a plate behind the taskbar text (transparent taskbar themes)
 bool g_stacked = false;      // icon above the percentage (menu option)
 bool g_brandColors = false;  // off by default; known brands get their color (Razer green, Logitech blue, ...)
-bool g_seelenServer = false;  // explicit test mode; later enabled by the Seelen integration setting
-bool g_seelenIntegration = false;
 bool g_seelenPrompted = false;
+#if defined(SEELEN_INTEGRATION)
+bool g_seelenServer = false;
+bool g_seelenIntegration = false;
 bool g_seelenBridgeActive = false;
-ULONGLONG g_nextSeelenCheck = 0;
+#endif
 std::atomic<DWORD> g_pollIntervalMs{ 60 * 1000 };  // set from the menu, read by the worker thread
 
 bool LoadBoolSetting(const wchar_t* name, bool defaultVal);
@@ -174,22 +178,51 @@ bool ShowMenuOnRunningInstance() {
 
 bool g_initialScanCompleted = false;
 std::vector<TrayEntry*> OrderedEntries(bool shownOnly);
+#if defined(SEELEN_INTEGRATION)
 void PublishSeelenState(const std::vector<TrayEntry*>& list);
+#endif
 
+bool IsSeelenRunning() {
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W process{ sizeof(process) };
+    bool found = false;
+    if (Process32FirstW(snapshot, &process)) {
+        do {
+            if (_wcsicmp(process.szExeFile, L"seelen-ui.exe") == 0) {
+                found = true;
+                break;
+            }
+        } while (Process32NextW(snapshot, &process));
+    }
+    CloseHandle(snapshot);
+    return found;
+}
+
+#if defined(SEELEN_INTEGRATION)
 bool IsBatteryHubProtocolKey(HKEY rootKey) {
     wchar_t desc[256] = {};
     DWORD size = sizeof(desc);
     DWORD type = 0;
-    if (RegQueryValueExW(rootKey, nullptr, nullptr, &type, reinterpret_cast<BYTE*>(desc), &size) == ERROR_SUCCESS && type == REG_SZ) {
-        if (wcsstr(desc, L"BatteryHub") != nullptr) return true;
-    }
+    const wchar_t expectedDescription[] = L"URL:BatteryHub Seelen menu";
+    bool hasExpectedDescription = RegQueryValueExW(rootKey, nullptr, nullptr, &type,
+        reinterpret_cast<BYTE*>(desc), &size) == ERROR_SUCCESS && type == REG_SZ &&
+        _wcsicmp(desc, expectedDescription) == 0;
     HKEY cmdKey = nullptr;
     if (RegOpenKeyExW(rootKey, L"shell\\open\\command", 0, KEY_READ, &cmdKey) == ERROR_SUCCESS) {
         wchar_t cmd[MAX_PATH * 2] = {};
         size = sizeof(cmd);
         if (RegQueryValueExW(cmdKey, nullptr, nullptr, &type, reinterpret_cast<BYTE*>(cmd), &size) == ERROR_SUCCESS && type == REG_SZ) {
             RegCloseKey(cmdKey);
-            if (wcsstr(cmd, L"BatteryHub") != nullptr) return true;
+            std::wstring value = cmd;
+            const std::wstring suffix = L"\" --show-menu \"%1\"";
+            size_t quote = value.find(L'\"', 1);
+            size_t slash = quote == std::wstring::npos ? std::wstring::npos : value.find_last_of(L"\\/", quote);
+            bool hasExpectedSuffix = value.size() >= suffix.size() &&
+                _wcsicmp(value.c_str() + value.size() - suffix.size(), suffix.c_str()) == 0;
+            bool hasBatteryHubExe = quote != std::wstring::npos && slash != std::wstring::npos &&
+                _wcsicmp(value.substr(slash + 1, quote - slash - 1).c_str(), L"BatteryHub.exe") == 0;
+            if (hasExpectedDescription && hasExpectedSuffix && hasBatteryHubExe) return true;
         } else {
             RegCloseKey(cmdKey);
         }
@@ -234,25 +267,8 @@ void UnregisterSeelenMenuProtocol() {
     }
 }
 
-bool IsSeelenRunning() {
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return false;
-    PROCESSENTRY32W process{ sizeof(process) };
-    bool found = false;
-    if (Process32FirstW(snapshot, &process)) {
-        do {
-            if (_wcsicmp(process.szExeFile, L"seelen-ui.exe") == 0) {
-                found = true;
-                break;
-            }
-        } while (Process32NextW(snapshot, &process));
-    }
-    CloseHandle(snapshot);
-    return found;
-}
-
 void UpdateSeelenBridge() {
-    bool shouldRun = g_seelenServer || (g_seelenIntegration && IsSeelenRunning());
+    bool shouldRun = g_seelenServer || g_seelenIntegration;
     if (shouldRun && !g_seelenBridgeActive) {
         RegisterSeelenMenuProtocol();
         g_seelenBridgeActive = seelen_bridge::Start();
@@ -265,19 +281,36 @@ void UpdateSeelenBridge() {
         g_seelenBridgeActive = false;
     }
 }
+#endif
 
-void MaybeOfferSeelenIntegration() {
-    if (g_seelenServer || g_seelenPrompted || !IsSeelenRunning()) return;
+void MaybeOfferSeelenIntegration(bool fromMenu = false) {
+#if defined(SEELEN_INTEGRATION)
+    if (g_seelenServer || (!fromMenu && g_seelenPrompted) || !IsSeelenRunning()) return;
+#else
+    if ((!fromMenu && g_seelenPrompted) || !IsSeelenRunning()) return;
+#endif
     g_seelenPrompted = true;
     SaveBoolSetting(L"SeelenIntegrationPrompted", true);
-    int choice = MessageBoxW(g_hwnd,
-                             L"Seelen UI is running. Show BatteryHub devices in its toolbar?\n\n"
-                             L"Selecting Yes opens the Seelen Marketplace, where you can install the BatteryHub plugin.",
-                             kAppName, MB_YESNO | MB_ICONQUESTION);
+    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Seelen sürümünü indir" }, { IDNO, L"Şimdi değil" }};
+    TASKDIALOGCONFIG dialog{ sizeof(dialog) };
+    dialog.hwndParent = g_hwnd;
+    dialog.pszWindowTitle = kAppName;
+    dialog.pszMainInstruction = L"Seelen UI algılandı";
+    dialog.pszContent = L"BatteryHub, Seelen UI Fancy Toolbar'da cihazlarının pil seviyelerini gösterebilir.\n\nBu özellik Seelen destekli BatteryHub sürümünü gerektirir.";
+    dialog.pButtons = buttons;
+    dialog.cButtons = ARRAYSIZE(buttons);
+    dialog.nDefaultButton = IDNO;
+    dialog.pszFooter = L"Yalnızca GitHub Releases içindeki uygun Windows paketi kullanılmalıdır.";
+    int choice = IDNO;
+    TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
     if (choice != IDYES) return;
+#if defined(SEELEN_INTEGRATION)
     g_seelenIntegration = true;
     SaveBoolSetting(L"SeelenIntegrationEnabled", true);
-    ShellExecuteW(nullptr, L"open", L"https://seelen.io/resources", nullptr, nullptr, SW_SHOWNORMAL);
+    UpdateSeelenBridge();
+#else
+    ShellExecuteW(nullptr, L"open", L"https://github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases", nullptr, nullptr, SW_SHOWNORMAL);
+#endif
 }
 
 // Devices the user chose to hide (by key), stored as a REG_MULTI_SZ.
@@ -701,6 +734,7 @@ std::vector<TrayEntry*> OrderedEntries(bool shownOnly) {
     return list;
 }
 
+#if defined(SEELEN_INTEGRATION)
 void PublishSeelenState(const std::vector<TrayEntry*>& list) {
     if (!g_seelenBridgeActive) return;
     std::vector<LabelInput> labelInput;
@@ -732,11 +766,14 @@ void PublishSeelenState(const std::vector<TrayEntry*>& list) {
     }
     seelen_bridge::Update(devices, g_initialScanCompleted);
 }
+#endif
 
 void UpdateWidget() {
     std::vector<TrayEntry*> list = OrderedEntries(true);
     if (!g_useWidget) {
+#if defined(SEELEN_INTEGRATION)
         PublishSeelenState(list);
+#endif
         return;
     }
     // Two devices of one kind share an icon: give each a tiny caption so they can be told apart.
@@ -765,7 +802,9 @@ void UpdateWidget() {
     }
     if (tip.empty()) tip = std::wstring(L"BatteryHub: ") + T(L"No devices with battery info found");
     widget::SetItems(items, tip);
+#if defined(SEELEN_INTEGRATION)
     PublishSeelenState(list);
+#endif
 }
 
 void OnResults(std::vector<DeviceStatus>& results) {
@@ -1020,8 +1059,12 @@ void ShowMenu() {
     AppendMenuW(m, MF_STRING | (g_wantWidget ? MF_CHECKED : 0), ID_MODE_WIDGET, T(L"Show on the taskbar (icon + percentage)"));
     AppendMenuW(m, MF_STRING | (!g_wantWidget ? MF_CHECKED : 0), ID_MODE_TRAY, T(L"Show as tray icons"));
     CheckMenuRadioItem(m, ID_MODE_WIDGET, ID_MODE_TRAY, g_wantWidget ? ID_MODE_WIDGET : ID_MODE_TRAY, MF_BYCOMMAND);
+#if defined(SEELEN_INTEGRATION)
     AppendMenuW(m, MF_STRING | (g_seelenIntegration ? MF_CHECKED : 0), ID_SEELEN_INTEGRATION,
                 L"Show BatteryHub in Seelen toolbar");
+#else
+    AppendMenuW(m, MF_STRING, ID_SEELEN_INTEGRATION, L"Seelen UI integration...");
+#endif
     UINT bgFlags = MF_STRING | (g_widgetBackground ? MF_CHECKED : 0) | (g_wantWidget ? 0 : MF_GRAYED);
     AppendMenuW(m, bgFlags, ID_WIDGET_BACKGROUND, T(L"Background behind taskbar text (for transparent taskbars)"));
     AppendMenuW(m, MF_STRING | (g_stacked ? MF_CHECKED : 0) | (g_wantWidget ? 0 : MF_GRAYED), ID_STACKED, T(L"Icons above percentages (narrower)"));
@@ -1114,6 +1157,7 @@ void ShowMenu() {
         case ID_MODE_WIDGET: SetMode(true); break;
         case ID_MODE_TRAY: SetMode(false); break;
         case ID_SEELEN_INTEGRATION:
+#if defined(SEELEN_INTEGRATION)
             g_seelenIntegration = !g_seelenIntegration;
             g_seelenPrompted = true;
             SaveBoolSetting(L"SeelenIntegrationEnabled", g_seelenIntegration);
@@ -1122,6 +1166,9 @@ void ShowMenu() {
             if (!g_seelenIntegration && !g_seelenServer) {
                 UnregisterSeelenMenuProtocol();
             }
+#else
+            MaybeOfferSeelenIntegration(true);
+#endif
             break;
         case ID_SUPPORT: ShellExecuteW(nullptr, L"open", L"https://github.com/sponsors/krisgfx9", nullptr, nullptr, SW_SHOWNORMAL); break;
         case ID_REPORT: report::Show(g_inst, g_hwnd); break;
@@ -1261,10 +1308,6 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_TIMER:
             if (wp == TIMER_DEBOUNCE) { KillTimer(h, TIMER_DEBOUNCE); SetEvent(g_refreshEvt); }
             if (wp == TIMER_WIDGET) { Reconcile(); updates::Tick(h); }
-            if (wp == TIMER_WIDGET && !g_seelenServer && g_seelenIntegration && GetTickCount64() >= g_nextSeelenCheck) {
-                UpdateSeelenBridge();
-                g_nextSeelenCheck = GetTickCount64() + 3000;
-            }
             if (wp == TIMER_ALERT_ICON) {
                 KillTimer(h, TIMER_ALERT_ICON);
                 if (g_alertIconAdded) { TrayDelete(ALERT_ICON_ID); g_alertIconAdded = false; }
@@ -1278,7 +1321,9 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_DESTROY:
             updates::Shutdown();
+#if defined(SEELEN_INTEGRATION)
             seelen_bridge::Stop();
+#endif
             KillTimer(h, TIMER_WIDGET);
             KillTimer(h, TIMER_ALERT_ICON);
             if (g_alertIconAdded) { TrayDelete(ALERT_ICON_ID); g_alertIconAdded = false; }
@@ -1420,7 +1465,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     if (cmdLine && wcsstr(cmdLine, L"--show-menu")) return ShowMenuOnRunningInstance() ? 0 : 1;
     g_inst = inst;
     g_demo = cmdLine && wcsstr(cmdLine, L"--demo");
+#if defined(SEELEN_INTEGRATION)
     g_seelenServer = cmdLine && wcsstr(cmdLine, L"--seelen-server");
+#endif
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\WirelessBatteryTray");
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
@@ -1453,7 +1500,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     g_widgetBackground = LoadWidgetBackground();
     g_brandColors = LoadBrandColors();
     g_stacked = LoadStacked();
+#if defined(SEELEN_INTEGRATION)
     g_seelenIntegration = LoadBoolSetting(L"SeelenIntegrationEnabled", false);
+#endif
     g_seelenPrompted = LoadBoolSetting(L"SeelenIntegrationPrompted", false);
     g_pollIntervalMs = LoadPollSeconds() * 1000;
     widget::SetStacked(g_stacked);
@@ -1467,8 +1516,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     LoadAlertThresholds();
     battery_history::Initialize(g_demo);
     MaybeOfferSeelenIntegration();
+#if defined(SEELEN_INTEGRATION)
     UpdateSeelenBridge();
-    g_nextSeelenCheck = GetTickCount64() + 3000;
+#endif
     Reconcile();
     UpdatePlaceholder();  // something to click on until the first poll finishes
     SetTimer(g_hwnd, TIMER_WIDGET, 1000, nullptr);

@@ -6,11 +6,17 @@ CHANNEL  ?= dev
 .DEFAULT_GOAL := BatteryHub.exe
 CXXFLAGS ?= -std=c++17 -Os -Wall -Wno-missing-field-initializers -ffunction-sections -fdata-sections \
             -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00
+SEELEN_INTEGRATION ?= 0
 LDFLAGS  ?= -municode -mwindows -static -s -Wl,--gc-sections
 LIBS     := -lhid -lsetupapi -lcfgmgr32 -lole32 -loleaut32 -lcomctl32 -lgdi32 -lruntimeobject -lws2_32 -lwinhttp -lbcrypt -lversion -lbluetoothapis
 
-SRC := $(wildcard src/*.cpp) $(wildcard src/drivers/*.cpp)
+SRC := $(filter-out src/seelen_bridge.cpp,$(wildcard src/*.cpp)) $(wildcard src/drivers/*.cpp)
+ifeq ($(SEELEN_INTEGRATION),1)
+CXXFLAGS += -DSEELEN_INTEGRATION -Ithird-party/seelen-ui/bridge
+SRC += third-party/seelen-ui/bridge/seelen_bridge.cpp
+endif
 OBJ := $(patsubst src/%.cpp,build/%.o,$(SRC)) build/app_res.o
+OBJ := $(patsubst third-party/seelen-ui/bridge/%.cpp,build/seelen-ui/bridge/%.o,$(OBJ))
 
 BatteryHub.exe: $(OBJ)
 	$(CXX) $(LDFLAGS) $^ -o $@ $(LIBS)
@@ -18,6 +24,10 @@ BatteryHub.exe: $(OBJ)
 build/%.o: src/%.cpp $(wildcard src/*.h src/drivers/*.h) build/version.h
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -municode -c $< -o $@
+
+build/seelen-ui/bridge/%.o: third-party/seelen-ui/bridge/%.cpp third-party/seelen-ui/bridge/%.h build/version.h
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -Isrc -Ithird-party/seelen-ui/bridge -municode -c $< -o $@
 
 build/version.h: scripts/generate-version.ps1 FORCE
 	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/generate-version.ps1 -Version "$(VERSION)" -Channel "$(CHANNEL)"
@@ -34,7 +44,7 @@ build/app_res.o: res/app.rc res/app.manifest res/app.ico res/app_light.ico build
 clean:
 	rm -rf build BatteryHub.exe
 
-test: test-update-core test-update-win test-update-signature test-seelen-bridge
+test: test-update-core test-update-win test-update-signature
 	@mkdir -p build
 	$(CXX) -std=c++17 -O2 -Wall tests/device_aliases_test.cpp -o build/device_aliases_test.exe
 	./build/device_aliases_test.exe
@@ -133,12 +143,12 @@ test-update-win: build/version.h build/app_res.o
 
 test-seelen-bridge:
 	@mkdir -p build
-	$(CXX) -std=c++17 -O2 -Wall -Wextra tests/seelen_bridge_test.cpp src/seelen_bridge.cpp -o build/seelen_bridge_test.exe -lws2_32
+	$(CXX) -std=c++17 -O2 -Wall -Wextra -Isrc -Ithird-party/seelen-ui/bridge third-party/seelen-ui/tests/seelen_bridge_test.cpp third-party/seelen-ui/bridge/seelen_bridge.cpp -o build/seelen_bridge_test.exe -lws2_32
 	./build/seelen_bridge_test.exe
 
 test-seelen-plugin:
-	python scripts/sync_seelen_plugin.py --check
-	node tests/seelen_plugin_test.js
+	python third-party/seelen-ui/scripts/sync_plugin.py --check
+	node third-party/seelen-ui/tests/seelen_plugin_test.js
 
 FORCE:
 

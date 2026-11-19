@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
 """
-Syncs seelen-plugin/metadata.yml and seelen-plugin/plugin/template.js into
-the standalone distribution bundle seelen-plugin/BatteryHub.yaml.
+Syncs metadata.yml and plugin/template.js into the standalone distribution bundle.
 """
 
 import sys
 import os
 
-def build_yaml(template_content: str) -> str:
+def read_metadata(path: str) -> dict[str, str]:
+    values = {}
+    for line in open(path, encoding="utf-8"):
+        if ":" not in line or line.lstrip().startswith("-"):
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if key in {"id", "displayName", "description", "icon", "target", "url"}:
+            values[key] = value.strip().strip('"').strip("'")
+    return values
+
+
+def build_yaml(template_content: str, metadata: dict[str, str]) -> str:
     # Indent template for YAML literal block
     indented_lines = []
     for line in template_content.strip().splitlines():
@@ -17,10 +28,10 @@ def build_yaml(template_content: str) -> str:
             indented_lines.append("")
     indented_template = "\n".join(indented_lines)
 
-    header = """id: '@isobyte/batteryhub'
+    header = f"""id: '{metadata['id']}'
 metadata:
-  displayName: BatteryHub
-  description: BatteryHub Fancy Toolbar module.
+  displayName: {metadata['displayName']}
+  description: {metadata['description']}
   portrait: null
   banner: null
   screenshots: []
@@ -28,10 +39,10 @@ metadata:
   - toolbar
   appTargetVersion: null
   premium: false
-  extras: {}
+  extras: {{}}
   remote: null
-icon: LuBatteryMedium
-target: '@seelen/fancy-toolbar'
+icon: {metadata['icon']}
+target: '{metadata['target']}'
 plugin:
   id: ''
   scopes: []
@@ -49,22 +60,23 @@ plugin:
   style: {}
   remoteData:
     batteryHub:
-      url: http://127.0.0.1:37842/seelen/state-text
+      url: __REMOTE_URL__
       requestInit: null
       updateIntervalSeconds: 3
-"""
+""".replace("__REMOTE_URL__", metadata["url"])
     return header + "\n" + indented_template + footer
 
 
 def main():
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    template_path = os.path.join(repo_root, "seelen-plugin", "plugin", "template.js")
-    output_path = os.path.join(repo_root, "seelen-plugin", "BatteryHub.yaml")
+    seelen_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    template_path = os.path.join(seelen_root, "plugin", "plugin", "template.js")
+    metadata_path = os.path.join(seelen_root, "plugin", "metadata.yml")
+    output_path = os.path.join(seelen_root, "plugin", "BatteryHub.yaml")
 
     with open(template_path, "r", encoding="utf-8") as f:
         template_content = f.read()
 
-    new_yaml = build_yaml(template_content)
+    new_yaml = build_yaml(template_content, read_metadata(metadata_path))
 
     if "--check" in sys.argv:
         if not os.path.exists(output_path):
@@ -73,14 +85,14 @@ def main():
         with open(output_path, "r", encoding="utf-8") as f:
             current = f.read()
         if current.replace("\r\n", "\n") != new_yaml.replace("\r\n", "\n"):
-            print("Error: BatteryHub.yaml is out of sync with plugin/template.js. Run scripts/sync_seelen_plugin.py to update it.", file=sys.stderr)
+            print("Error: BatteryHub.yaml is out of sync. Run third-party/seelen-ui/scripts/sync_plugin.py.", file=sys.stderr)
             sys.exit(1)
         print("BatteryHub.yaml is up to date.")
         sys.exit(0)
 
     with open(output_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(new_yaml)
-    print("Successfully synchronized seelen-plugin/BatteryHub.yaml")
+    print("Successfully synchronized third-party/seelen-ui/plugin/BatteryHub.yaml")
 
 
 if __name__ == "__main__":

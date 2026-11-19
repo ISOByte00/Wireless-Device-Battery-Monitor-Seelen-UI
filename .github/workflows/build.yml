@@ -36,9 +36,13 @@ jobs:
           "WB_VERSION=$version" >> $env:GITHUB_ENV
           "WB_CHANNEL=$channel" >> $env:GITHUB_ENV
 
-      - name: Build BatteryHub.exe
+      - name: Build standard BatteryHub.exe
         shell: msys2 {0}
         run: make VERSION="$WB_VERSION" CHANNEL="$WB_CHANNEL"
+
+      - name: Build Seelen BatteryHub.exe
+        shell: msys2 {0}
+        run: make clean && make SEELEN_INTEGRATION=1 VERSION="$WB_VERSION" CHANNEL="$WB_CHANNEL" && make test-seelen-bridge && make clean && make VERSION="$WB_VERSION" CHANNEL="$WB_CHANNEL"
 
       - name: Test device protocols and Windows updater
         shell: msys2 {0}
@@ -47,8 +51,8 @@ jobs:
       - name: Verify Seelen plugin sync and run plugin tests
         shell: pwsh
         run: |
-          python scripts/sync_seelen_plugin.py --check
-          node tests/seelen_plugin_test.js
+          python third-party/seelen-ui/scripts/sync_plugin.py --check
+          node third-party/seelen-ui/tests/seelen_plugin_test.js
 
       - name: Install Inno Setup
         shell: pwsh

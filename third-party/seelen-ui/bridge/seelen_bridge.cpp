@@ -96,18 +96,7 @@ bool IsAllowedOrigin(const std::string& origin) {
     if (origin.empty()) return true;  // non-browser/native client
     std::string o = ToLower(origin);
 
-    // Tauri origins
-    if (StartsWith(o, "tauri://")) return true;
-    if (o == "http://tauri.localhost" || o == "https://tauri.localhost") return true;
-    if (StartsWith(o, "http://tauri.localhost:") || StartsWith(o, "https://tauri.localhost:")) return true;
-
-    // Localhost / Loopback origins (development / webview)
-    if (o == "http://localhost" || o == "https://localhost") return true;
-    if (StartsWith(o, "http://localhost:") || StartsWith(o, "https://localhost:")) return true;
-    if (o == "http://127.0.0.1" || o == "https://127.0.0.1") return true;
-    if (StartsWith(o, "http://127.0.0.1:") || StartsWith(o, "https://127.0.0.1:")) return true;
-
-    return false;
+    return o == "http://tauri.localhost" || o == "https://tauri.localhost";
 }
 
 bool IsValidHost(const std::string& host) {
@@ -255,28 +244,11 @@ HttpResponse HandleHttpRequest(const std::string& rawRequest, const std::string&
         return res;
     }
 
-    // Handle OPTIONS preflight
-    if (method == "OPTIONS") {
-        res.statusCode = 204;
-        res.statusText = "No Content";
-        std::string response = "HTTP/1.1 204 No Content\r\nConnection: close\r\n";
-        if (hasOrigin) {
-            res.allowOrigin = origin;
-            response += "Access-Control-Allow-Origin: " + origin + "\r\n";
-            response += "Vary: Origin\r\n";
-            response += "Access-Control-Allow-Methods: GET, OPTIONS\r\n";
-            response += "Access-Control-Allow-Headers: Content-Type, Accept\r\n";
-        }
-        response += "Content-Length: 0\r\n\r\n";
-        res.rawResponse = std::move(response);
-        return res;
-    }
-
-    // Only GET is allowed for data endpoints
+    // Only the toolbar's GET requests are supported.
     if (method != "GET") {
         res.statusCode = 405;
         res.statusText = "Method Not Allowed";
-        res.rawResponse = "HTTP/1.1 405 Method Not Allowed\r\nAllow: GET, OPTIONS\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        res.rawResponse = "HTTP/1.1 405 Method Not Allowed\r\nAllow: GET\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
         return res;
     }
 
@@ -323,6 +295,7 @@ HttpResponse HandleHttpRequest(const std::string& rawRequest, const std::string&
 
 bool Start(unsigned short port) {
     if (g_running.load()) return true;
+    if (g_thread) return false;
 
     WSADATA wsa{};
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return false;
@@ -333,8 +306,13 @@ bool Start(unsigned short port) {
         return false;
     }
 
-    BOOL reuse = TRUE;
-    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+    BOOL exclusive = TRUE;
+    if (setsockopt(listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                   reinterpret_cast<const char*>(&exclusive), sizeof(exclusive)) == SOCKET_ERROR) {
+        closesocket(listener);
+        WSACleanup();
+        return false;
+    }
 
     sockaddr_in address{};
     address.sin_family = AF_INET;
@@ -362,24 +340,26 @@ bool Start(unsigned short port) {
 }
 
 void Stop() {
-    if (!g_running.exchange(false)) return;
+    bool wasRunning = g_running.exchange(false);
+    if (!wasRunning && !g_thread) return;
 
-    SOCKET listener = g_listener.exchange(INVALID_SOCKET);
-    if (listener != INVALID_SOCKET) {
-        closesocket(listener);
+    if (wasRunning) {
+        SOCKET listener = g_listener.exchange(INVALID_SOCKET);
+        if (listener != INVALID_SOCKET) {
+            closesocket(listener);
+        }
     }
 
-    SOCKET active = g_activeClient.exchange(INVALID_SOCKET);
+    SOCKET active = g_activeClient.load();
     if (active != INVALID_SOCKET) {
-        closesocket(active);
+        shutdown(active, SD_BOTH);
     }
 
-    if (g_thread) {
-        WaitForSingleObject(g_thread, 3000);
-        CloseHandle(g_thread);
-        g_thread = nullptr;
-    }
-
+    if (!g_thread) return;
+    DWORD wait = WaitForSingleObject(g_thread, 3000);
+    if (wait != WAIT_OBJECT_0) return;
+    CloseHandle(g_thread);
+    g_thread = nullptr;
     WSACleanup();
 }
 
