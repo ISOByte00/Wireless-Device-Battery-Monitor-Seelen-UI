@@ -97,5 +97,15 @@ int main() {
     for (const auto* url : { L"http://github.com/a", L"https://github.com.evil/a", L"https://user@github.com/a",
                              L"https://github.com:443/a", L"https://github.com/a#x", L"https://github.com/a\r\nx" })
         assert(!AllowedDownloadUrl(url));
+    const std::string experimentalBase = "https://github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases/download/v0.1.0/";
+    const std::string experimental = "{\"tag_name\":\"v0.1.0\",\"draft\":false,\"prerelease\":true,\"html_url\":\"https://github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases/tag/v0.1.0\",\"assets\":["
+        "{\"name\":\"BatteryHub-Seelen-Setup-0.1.0.exe\",\"state\":\"uploaded\",\"size\":42,\"digest\":\"sha256:" + std::string(64, 'b') + "\",\"browser_download_url\":\"" + experimentalBase + "BatteryHub-Seelen-Setup-0.1.0.exe\"},"
+        "{\"name\":\"SHA256SUMS.txt\",\"state\":\"uploaded\",\"size\":99,\"browser_download_url\":\"" + experimentalBase + "SHA256SUMS.txt\"}]}";
+    assert(ParseExperimentalSeelenRelease(experimental, result));
+    assert(result.download == experimentalBase + "BatteryHub-Seelen-Setup-0.1.0.exe" && result.sha256 == std::string(64, 'b'));
+    std::string checksum;
+    assert(ChecksumHash(std::string(64, 'b') + "  BatteryHub-Seelen-Setup-0.1.0.exe\n", "BatteryHub-Seelen-Setup-0.1.0.exe", checksum));
+    assert(checksum == std::string(64, 'b'));
+    assert(!ChecksumHash(std::string(64, 'b') + " *BatteryHub-Seelen-Setup-0.1.0.exe\n", "BatteryHub-Seelen-Setup-0.1.0.exe", checksum));
     std::puts("Update core tests passed (versions, strict JSON, release and asset validation).");
 }

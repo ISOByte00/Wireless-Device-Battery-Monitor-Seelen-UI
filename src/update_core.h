@@ -28,6 +28,11 @@ struct ReleaseInfo {
 };
 enum class ReleaseResult { Invalid, NoUpdate, Available };
 ReleaseResult ParseRelease(const std::string& json, const Version& current, ReleaseInfo& out);
+// Parses only the fixed experimental release offered by the standard build.  It is
+// deliberately separate from the regular updater: experimental prereleases are
+// never treated as BatteryHub product updates.
+bool ParseExperimentalSeelenRelease(const std::string& json, ReleaseInfo& out);
+bool ChecksumHash(const std::string& sums, const std::string& filename, std::string& hash);
 bool ValidDigest(const std::string& digest, std::string& hex);
 bool AllowedDownloadUrl(const std::wstring& url);
 struct CheckSchedule {

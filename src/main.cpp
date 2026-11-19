@@ -253,7 +253,7 @@ void OfferSeelenIntegration(bool fromMenu = false) {
     g_seelenPrompted = true;
     SaveBoolSetting(L"SeelenIntegrationPrompted", true);
     if (choice == IDYES)
-        ShellExecuteW(nullptr, L"open", L"https://github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases", nullptr, nullptr, SW_SHOWNORMAL);
+        updates::DownloadSeelenInstaller(g_hwnd);
 }
 
 // A REG_MULTI_SZ with one "device-key<TAB>threshold" entry per override.

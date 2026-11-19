@@ -15,6 +15,9 @@ bool AutomaticEnabled();
 bool Supported();
 void ToggleAutomatic();
 void Activate(HWND owner);
+// Explicit, user-initiated download of the fixed ISOByte00 experimental build.
+// This is not part of regular automatic update checking.
+void DownloadSeelenInstaller(HWND owner);
 
 // Native helpers also used by the download worker and temporary installer helper.
 struct Installation {
