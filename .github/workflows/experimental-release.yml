@@ -1,0 +1,116 @@
+name: experimental Seelen release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: feat/seelen-detection
+          path: standard
+          persist-credentials: false
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: feat/seelen-ui-integration
+          path: seelen
+          persist-credentials: false
+
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc make
+
+      - name: Build and test standard BatteryHub
+        working-directory: standard
+        shell: msys2 {0}
+        run: |
+          make VERSION=0.1.0 CHANNEL=dev
+          make test VERSION=0.1.0 CHANNEL=dev
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Package standard BatteryHub
+        working-directory: standard
+        shell: pwsh
+        run: ./installer/build-installer.ps1 -Version 0.1.0
+
+      - name: Build and test Seelen BatteryHub
+        working-directory: seelen
+        shell: msys2 {0}
+        run: |
+          make SEELEN_INTEGRATION=1 VERSION=0.1.0 CHANNEL=seelen
+          make test VERSION=0.1.0 CHANNEL=seelen
+          make test-seelen-bridge
+
+      - name: Verify Seelen plugin
+        working-directory: seelen
+        shell: pwsh
+        run: |
+          python third-party/seelen-ui/scripts/sync_plugin.py --check
+          node third-party/seelen-ui/tests/seelen_plugin_test.js
+
+      - name: Package Seelen BatteryHub
+        working-directory: seelen
+        shell: pwsh
+        run: ./installer/build-installer.ps1 -Version 0.1.0 -Flavor Seelen
+
+      - name: Assemble release files and checksums
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item standard/dist/BatteryHub-Setup-0.1.0.exe release/BatteryHub-Standard-Setup-0.1.0.exe
+          Copy-Item seelen/dist/BatteryHub-Seelen-Setup-0.1.0.exe release/
+          Copy-Item seelen/dist/BatteryHub-Seelen-0.1.0-portable.zip release/
+          Copy-Item seelen/third-party/seelen-ui/plugin/BatteryHub.yaml release/BatteryHub-Seelen-plugin.yaml
+          $sums = Get-ChildItem release -File | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          }
+          [IO.File]::WriteAllText((Join-Path $PWD 'release/SHA256SUMS.txt'), (($sums -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+          $standard = git -C standard rev-parse HEAD
+          $seelen = git -C seelen rev-parse HEAD
+          @"
+          # BatteryHub Seelen Integration v0.1.0 (Experimental)
+
+          This is an ISOByte00 experimental integration release, not an official BatteryHub release.
+
+          - Standard installer source: feat/seelen-detection @ $standard
+          - Seelen installer source: feat/seelen-ui-integration @ $seelen
+          - The Seelen installer is verified by the standard build against the GitHub asset digest and SHA256SUMS.txt before it can be run.
+          "@.Trim() | Set-Content release/RELEASE_NOTES.md -NoNewline
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: experimental-release
+          path: release/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: experimental-release
+          path: release
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: v0.1.0
+          target_commitish: ${{ github.sha }}
+          name: BatteryHub Seelen Integration v0.1.0 (Experimental)
+          prerelease: true
+          body_path: release/RELEASE_NOTES.md
+          files: |
+            release/BatteryHub-Standard-Setup-0.1.0.exe
+            release/BatteryHub-Seelen-Setup-0.1.0.exe
+            release/BatteryHub-Seelen-0.1.0-portable.zip
+            release/BatteryHub-Seelen-plugin.yaml
+            release/SHA256SUMS.txt
