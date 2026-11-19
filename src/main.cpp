@@ -172,10 +172,43 @@ bool ShowMenuOnRunningInstance() {
     return PostMessageW(window, WM_WIDGET_CLICK, 0, 0);
 }
 
+bool g_initialScanCompleted = false;
+std::vector<TrayEntry*> OrderedEntries(bool shownOnly);
+void PublishSeelenState(const std::vector<TrayEntry*>& list);
+
+bool IsBatteryHubProtocolKey(HKEY rootKey) {
+    wchar_t desc[256] = {};
+    DWORD size = sizeof(desc);
+    DWORD type = 0;
+    if (RegQueryValueExW(rootKey, nullptr, nullptr, &type, reinterpret_cast<BYTE*>(desc), &size) == ERROR_SUCCESS && type == REG_SZ) {
+        if (wcsstr(desc, L"BatteryHub") != nullptr) return true;
+    }
+    HKEY cmdKey = nullptr;
+    if (RegOpenKeyExW(rootKey, L"shell\\open\\command", 0, KEY_READ, &cmdKey) == ERROR_SUCCESS) {
+        wchar_t cmd[MAX_PATH * 2] = {};
+        size = sizeof(cmd);
+        if (RegQueryValueExW(cmdKey, nullptr, nullptr, &type, reinterpret_cast<BYTE*>(cmd), &size) == ERROR_SUCCESS && type == REG_SZ) {
+            RegCloseKey(cmdKey);
+            if (wcsstr(cmd, L"BatteryHub") != nullptr) return true;
+        } else {
+            RegCloseKey(cmdKey);
+        }
+    }
+    return false;
+}
+
 // Registered only for the explicit Seelen integration mode. The protocol launcher exits after it
 // hands the request to the normal BatteryHub window, so it never becomes a second running app.
 void RegisterSeelenMenuProtocol() {
     HKEY key = nullptr;
+    std::wstring expectedCmd = L"\"" + ExePath() + L"\" --show-menu \"%1\"";
+
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub", 0, KEY_READ, &key) == ERROR_SUCCESS) {
+        bool isOurs = IsBatteryHubProtocolKey(key);
+        RegCloseKey(key);
+        if (!isOurs) return;  // Do not overwrite third-party protocol registrations
+    }
+
     if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub", 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
         return;
     const wchar_t description[] = L"URL:BatteryHub Seelen menu";
@@ -185,10 +218,20 @@ void RegisterSeelenMenuProtocol() {
 
     if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub\\shell\\open\\command", 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
         return;
-    std::wstring command = L"\"" + ExePath() + L"\" --show-menu \"%1\"";
-    RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
-                   (DWORD)((command.size() + 1) * sizeof(wchar_t)));
+    RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(expectedCmd.c_str()),
+                   (DWORD)((expectedCmd.size() + 1) * sizeof(wchar_t)));
     RegCloseKey(key);
+}
+
+void UnregisterSeelenMenuProtocol() {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub", 0, KEY_READ, &key) == ERROR_SUCCESS) {
+        bool isOurs = IsBatteryHubProtocolKey(key);
+        RegCloseKey(key);
+        if (isOurs) {
+            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub");
+        }
+    }
 }
 
 bool IsSeelenRunning() {
@@ -213,6 +256,10 @@ void UpdateSeelenBridge() {
     if (shouldRun && !g_seelenBridgeActive) {
         RegisterSeelenMenuProtocol();
         g_seelenBridgeActive = seelen_bridge::Start();
+        if (g_seelenBridgeActive) {
+            std::vector<TrayEntry*> list = OrderedEntries(true);
+            PublishSeelenState(list);
+        }
     } else if (!shouldRun && g_seelenBridgeActive) {
         seelen_bridge::Stop();
         g_seelenBridgeActive = false;
@@ -683,7 +730,7 @@ void PublishSeelenState(const std::vector<TrayEntry*>& list) {
             offline || status.percent < 0,
         });
     }
-    seelen_bridge::Update(devices);
+    seelen_bridge::Update(devices, g_initialScanCompleted);
 }
 
 void UpdateWidget() {
@@ -722,6 +769,7 @@ void UpdateWidget() {
 }
 
 void OnResults(std::vector<DeviceStatus>& results) {
+    g_initialScanCompleted = true;
     std::map<std::wstring, bool> seen;
     for (auto& s : results) {
         auto& e = g_entries[s.key];
@@ -1071,6 +1119,9 @@ void ShowMenu() {
             SaveBoolSetting(L"SeelenIntegrationEnabled", g_seelenIntegration);
             SaveBoolSetting(L"SeelenIntegrationPrompted", true);
             UpdateSeelenBridge();
+            if (!g_seelenIntegration && !g_seelenServer) {
+                UnregisterSeelenMenuProtocol();
+            }
             break;
         case ID_SUPPORT: ShellExecuteW(nullptr, L"open", L"https://github.com/sponsors/krisgfx9", nullptr, nullptr, SW_SHOWNORMAL); break;
         case ID_REPORT: report::Show(g_inst, g_hwnd); break;

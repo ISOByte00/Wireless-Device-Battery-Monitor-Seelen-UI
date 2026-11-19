@@ -2,9 +2,10 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/seelen-ui-integration]
     tags: ["v*"]
   pull_request:
+    branches: [main, feat/seelen-ui-integration]
 
 # Read-only by default: builds of pull requests cannot change the repository or releases.
 permissions:
@@ -43,6 +44,12 @@ jobs:
         shell: msys2 {0}
         run: make test VERSION="$WB_VERSION" CHANNEL="$WB_CHANNEL"
 
+      - name: Verify Seelen plugin sync and run plugin tests
+        shell: pwsh
+        run: |
+          python scripts/sync_seelen_plugin.py --check
+          node tests/seelen_plugin_test.js
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
@@ -63,10 +70,10 @@ jobs:
           name: BatteryHub
           path: dist/*
 
-  # Only this job can publish, and only for version tags pushed by the maintainer.
+  # Only this job can publish, and only for version tags pushed by the upstream maintainer.
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && github.repository == 'krisgfx9/Wireless-Device-Battery-Monitor'
     runs-on: ubuntu-latest
     permissions:
       contents: write

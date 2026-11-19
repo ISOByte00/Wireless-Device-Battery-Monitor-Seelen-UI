@@ -1,3 +1,34 @@
+# BatteryHub (Seelen UI Integration Fork)
+
+> [!NOTE]
+> **Experimental Fork Notice**
+> This repository is an experimental fork of [BatteryHub](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) created to integrate BatteryHub with [Seelen UI](https://seelen.io)'s Fancy Toolbar.
+> - **Original Author:** [krisgfx9](https://github.com/krisgfx9) (All original credits, licenses, sponsorships, and documentation belong to the upstream project).
+> - **Status:** Experimental / In Development & Testing. This is **not** an official upstream BatteryHub release.
+> - **Requirements:** Requires this custom BatteryHub build alongside the Seelen UI BatteryHub plugin (`@isobyte/batteryhub`).
+> - **Known Limitation:** In Seelen UI (v2.8.10 / v2.8.11), adding or managing external toolbar modules can occasionally trigger an upstream layout issue where previously configured modules disappear due to Seelen's `isStale` item pruning. Always backup your Seelen configuration (`state.yml`) before modifying toolbar items.
+
+### Seelen UI Integration
+
+- **Architecture:** BatteryHub reads device battery levels using its existing native drivers without duplicate hardware polling.
+- **Local Bridge:** A secured loopback endpoint (`127.0.0.1:37842/seelen/state-text`) serves current device state in plain text / JSON.
+- **Protocol Launcher:** Clicking any device in the Seelen Fancy Toolbar triggers the `batteryhub://show-menu` protocol, activating the native menu on the running instance without starting a secondary process.
+- **Tested Seelen UI Versions:** Seelen UI v2.8.10 and v2.8.11.
+
+#### How to Enable
+1. Run BatteryHub.
+2. In the BatteryHub menu, toggle **"Show BatteryHub in Seelen toolbar"** (or run with `--seelen-server`).
+3. Place `seelen-plugin/BatteryHub.yaml` into your Seelen UI plugins directory (or import via Seelen UI Settings).
+4. Add the `@isobyte/batteryhub` module to your Fancy Toolbar layout.
+
+#### Troubleshooting
+- **"Veri bekleniyor":** Bridge server is running and waiting for the initial hardware scan to complete.
+- **"Cihaz yok":** No active or unhidden battery-reporting devices are currently detected.
+- **"Veri okunamadı":** Communication issue or corrupted data payload.
+- **Click doesn't open menu:** Verify BatteryHub is actively running in the background.
+
+---
+
 # BatteryHub
 
 *Formerly **Wireless Battery**. Version 1.1.0 renamed the app; an update keeps your settings, startup choice and battery history.*

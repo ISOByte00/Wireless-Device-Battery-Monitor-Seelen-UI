@@ -24,6 +24,18 @@ struct Device {
 
 bool Start(unsigned short port = 37842);
 void Stop();
-void Update(const std::vector<Device>& devices);
+bool IsRunning();
+void Update(const std::vector<Device>& devices, bool isInitialScanDone = true);
+
+struct HttpResponse {
+    int statusCode = 200;
+    std::string statusText = "OK";
+    std::string contentType;
+    std::string allowOrigin;
+    std::string body;
+    std::string rawResponse;
+};
+
+HttpResponse HandleHttpRequest(const std::string& rawRequest, const std::string& currentJson);
 
 }  // namespace seelen_bridge

@@ -34,7 +34,7 @@ build/app_res.o: res/app.rc res/app.manifest res/app.ico res/app_light.ico build
 clean:
 	rm -rf build BatteryHub.exe
 
-test: test-update-core test-update-win test-update-signature
+test: test-update-core test-update-win test-update-signature test-seelen-bridge
 	@mkdir -p build
 	$(CXX) -std=c++17 -O2 -Wall tests/device_aliases_test.cpp -o build/device_aliases_test.exe
 	./build/device_aliases_test.exe
@@ -131,6 +131,15 @@ test-update-win: build/version.h build/app_res.o
 	    -o build/update_win_test.exe -lwinhttp -lbcrypt -lcomctl32 -lversion -lole32
 	./build/update_win_test.exe
 
+test-seelen-bridge:
+	@mkdir -p build
+	$(CXX) -std=c++17 -O2 -Wall -Wextra tests/seelen_bridge_test.cpp src/seelen_bridge.cpp -o build/seelen_bridge_test.exe -lws2_32
+	./build/seelen_bridge_test.exe
+
+test-seelen-plugin:
+	python scripts/sync_seelen_plugin.py --check
+	node tests/seelen_plugin_test.js
+
 FORCE:
 
-.PHONY: clean test test-update-core test-update-win test-update-signature FORCE
+.PHONY: clean test test-update-core test-update-win test-update-signature test-seelen-bridge test-seelen-plugin FORCE
