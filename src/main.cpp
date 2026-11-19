@@ -52,7 +52,7 @@ enum MenuId : UINT {
     ID_REFRESH = 100, ID_AUTOSTART, ID_HIDE_LAST_KNOWN, ID_WIDGET_BACKGROUND, ID_EXIT, ID_MODE_WIDGET, ID_MODE_TRAY, ID_SUPPORT, ID_REPORT,
     ID_BRAND_COLORS, ID_STACKED, ID_SHOW_DISCONNECTED, ID_RECORD_HISTORY,
     ID_POLL_FIRST = 500,  // "Check battery every": ID_POLL_FIRST + 0..7
-    ID_UPDATE = 200, ID_AUTO_UPDATE, ID_SEELEN_INTEGRATION,
+    ID_UPDATE = 200, ID_AUTO_UPDATE, ID_SEELEN_INTEGRATION, ID_SEELEN_GUIDE,
     ID_LANG_AUTO = 400, ID_LANG_ADD, ID_LANG_FIRST,  // "Language": ID_LANG_FIRST + 0..63
     ID_MONITOR_ALL = 300, ID_MONITOR_MAIN, ID_MONITOR_FIRST,  // "Show the widget on": ID_MONITOR_FIRST + 0..31
     ID_DEVICE_FIRST = 1000
@@ -83,10 +83,27 @@ bool g_widgetBackground = false;  // draw a plate behind the taskbar text (trans
 bool g_stacked = false;      // icon above the percentage (menu option)
 bool g_brandColors = false;  // off by default; known brands get their color (Razer green, Logitech blue, ...)
 bool g_seelenPrompted = false;
+bool g_seelenGuideShown = false;
 #if defined(SEELEN_INTEGRATION)
 bool g_seelenServer = false;
 bool g_seelenIntegration = false;
 bool g_seelenBridgeActive = false;
+#endif
+
+#if defined(SEELEN_INTEGRATION)
+void ShowSeelenGuide() {
+    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Open plugin page" }, { IDNO, L"Got it" }};
+    TASKDIALOGCONFIG dialog{ sizeof(dialog) };
+    dialog.pszWindowTitle = kAppName;
+    dialog.pszMainInstruction = L"Welcome to BatteryHub for Seelen UI";
+    dialog.pszContent = L"BatteryHub can display your mouse, keyboard, headset and other device battery levels in Seelen UI's Fancy Toolbar.\n\n1. Install the BatteryHub plugin from Seelen UI.\n2. Right-click BatteryHub and enable Show BatteryHub in Seelen toolbar.\n3. Add the BatteryHub plugin to your Fancy Toolbar layout.\n4. Your device battery levels will appear automatically.";
+    dialog.pButtons = buttons;
+    dialog.cButtons = ARRAYSIZE(buttons);
+    dialog.nDefaultButton = IDNO;
+    int choice = IDNO;
+    if (SUCCEEDED(TaskDialogIndirect(&dialog, &choice, nullptr, nullptr)) && choice == IDYES)
+        ShellExecuteW(nullptr, L"open", L"https://seelen.io/resources/review/FnhWFEKvR0WJ-RJW4_nmQQ", nullptr, nullptr, SW_SHOWNORMAL);
+}
 #endif
 std::atomic<DWORD> g_pollIntervalMs{ 60 * 1000 };  // set from the menu, read by the worker thread
 
@@ -1062,6 +1079,7 @@ void ShowMenu() {
 #if defined(SEELEN_INTEGRATION)
     AppendMenuW(m, MF_STRING | (g_seelenIntegration ? MF_CHECKED : 0), ID_SEELEN_INTEGRATION,
                 L"Show BatteryHub in Seelen toolbar");
+    AppendMenuW(m, MF_STRING, ID_SEELEN_GUIDE, L"Seelen UI setup guide...");
 #else
     AppendMenuW(m, MF_STRING, ID_SEELEN_INTEGRATION, L"Seelen UI integration...");
 #endif
@@ -1168,6 +1186,11 @@ void ShowMenu() {
             }
 #else
             MaybeOfferSeelenIntegration(true);
+#endif
+            break;
+        case ID_SEELEN_GUIDE:
+#if defined(SEELEN_INTEGRATION)
+            ShowSeelenGuide();
 #endif
             break;
         case ID_SUPPORT: ShellExecuteW(nullptr, L"open", L"https://github.com/sponsors/krisgfx9", nullptr, nullptr, SW_SHOWNORMAL); break;
@@ -1504,6 +1527,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     g_seelenIntegration = LoadBoolSetting(L"SeelenIntegrationEnabled", false);
 #endif
     g_seelenPrompted = LoadBoolSetting(L"SeelenIntegrationPrompted", false);
+    g_seelenGuideShown = LoadBoolSetting(L"SeelenFirstRunGuideShown", false);
     g_pollIntervalMs = LoadPollSeconds() * 1000;
     widget::SetStacked(g_stacked);
     widget::SetBackground(g_widgetBackground);  // remembered by the widget across re-creation
@@ -1517,6 +1541,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     battery_history::Initialize(g_demo);
     MaybeOfferSeelenIntegration();
 #if defined(SEELEN_INTEGRATION)
+    if (!g_seelenGuideShown) {
+        ShowSeelenGuide();
+        g_seelenGuideShown = true;
+        SaveBoolSetting(L"SeelenFirstRunGuideShown", true);
+    }
     UpdateSeelenBridge();
 #endif
     Reconcile();
