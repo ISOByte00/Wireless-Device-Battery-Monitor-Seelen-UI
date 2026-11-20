@@ -16,7 +16,10 @@
 namespace updates {
 namespace {
 constexpr const wchar_t* Settings = L"Software\\WirelessBattery";
-constexpr const wchar_t* Cache = L"Software\\WirelessBattery\\Updates";
+constexpr const wchar_t* Cache = appversion::seelen ? L"Software\\WirelessBattery\\Updates\\Seelen" :
+                                                      L"Software\\WirelessBattery\\Updates";
+constexpr const wchar_t* PreferenceKey = appversion::seelen ? Cache : Settings;
+constexpr const char* UpdateRepository = appversion::seelen ? SeelenRepository : Repository;
 enum class Operation { Idle, Checking, Downloading, Installing };
 struct Result {
     ReleaseInfo release;
@@ -121,7 +124,8 @@ Result FetchRelease() {
     }
     HINTERNET connection = WinHttpConnect(session, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
     HINTERNET req = connection ? WinHttpOpenRequest(connection, L"GET",
-        L"/repos/krisgfx9/Wireless-Device-Battery-Monitor/releases/latest", nullptr,
+        appversion::seelen ? L"/repos/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases" :
+                            L"/repos/krisgfx9/Wireless-Device-Battery-Monitor/releases/latest", nullptr,
         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
     DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
     bool configured = req && WinHttpSetOption(req, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
@@ -151,7 +155,9 @@ Result FetchRelease() {
             }
             Version current;
             ParseVersion(appversion::text, current);
-            if (complete && ParseRelease(body, current, out.release) != ReleaseResult::Invalid) out.success = true;
+            ReleaseResult parsed = appversion::seelen ? ParseSeelenReleases(body, current, out.release) :
+                                                        ParseRelease(body, current, out.release);
+            if (complete && parsed != ReleaseResult::Invalid) out.success = true;
             else out.error = L"GitHub returned invalid update information. Please try again later.";
         } else out.error = L"GitHub could not provide update information. Please try again later.";
     }
@@ -227,9 +233,9 @@ void Initialize() {
     CleanOldDownloads();
     started = GetTickCount64();
     DWORD enabled = 1, size = sizeof(enabled);
-    RegGetValueW(HKEY_CURRENT_USER, Settings, L"AutoCheckUpdates", RRF_RT_REG_DWORD, nullptr, &enabled, &size);
+    RegGetValueW(HKEY_CURRENT_USER, PreferenceKey, L"AutoCheckUpdates", RRF_RT_REG_DWORD, nullptr, &enabled, &size);
     automatic = enabled != 0;
-    if (!appversion::official) return;
+    if (!appversion::updates) return;
     schedule = { ReadTime(L"LastAttempt"), ReadTime(L"NextAutomatic"), ReadTime(L"RetryAfter") };
     wchar_t tag[64]{};
     size = sizeof(tag);
@@ -241,7 +247,7 @@ void Initialize() {
         if (ParseVersion(ascii, cached) && Newer(cached, current)) {
             known.version = cached;
             known.tag = ascii;
-            known.page = std::string("https://github.com/") + Repository + "/releases/tag/" + ascii;
+            known.page = std::string("https://github.com/") + UpdateRepository + "/releases/tag/" + ascii;
         }
     }
 }
@@ -273,10 +279,10 @@ void Tick(HWND owner) {
             manual = false;
             if (!completed.success) ShowMessage(owner, lastError.c_str());
             else if (!known.tag.empty()) ShowAvailable(owner);
-            else ShowMessage(owner, L"BatteryHub is up to date.");
+            else ShowMessage(owner, appversion::seelen ? L"BatteryHub Seelen is up to date." : L"BatteryHub is up to date.");
         }
     }
-    if (appversion::official && automatic && operation == Operation::Idle && GetTickCount64() - started >= 30000 && schedule.Due(Now()))
+    if (appversion::updates && automatic && operation == Operation::Idle && GetTickCount64() - started >= 30000 && schedule.Due(Now()))
         StartCheck(false);
 }
 
@@ -289,13 +295,13 @@ void Shutdown() {
 }
 
 bool Busy() { return dialogOpen || operation != Operation::Idle; }
-bool AutomaticEnabled() { return automatic && appversion::official; }
-bool Supported() { return appversion::official; }
+bool AutomaticEnabled() { return automatic && appversion::updates; }
+bool Supported() { return appversion::updates; }
 void ToggleAutomatic() {
-    if (!appversion::official) return;
+    if (!appversion::updates) return;
     automatic = !automatic;
     DWORD value = automatic;
-    RegSetKeyValueW(HKEY_CURRENT_USER, Settings, L"AutoCheckUpdates", REG_DWORD, &value, sizeof(value));
+    RegSetKeyValueW(HKEY_CURRENT_USER, PreferenceKey, L"AutoCheckUpdates", REG_DWORD, &value, sizeof(value));
 }
 
 std::wstring MenuLabel() {
@@ -307,7 +313,7 @@ std::wstring MenuLabel() {
 
 void Activate(HWND owner) {
     if (Busy() || shuttingDown) return;
-    if (!appversion::official) {
+    if (!appversion::updates) {
         ShowMessage(owner, L"This is a development build. Automatic release updates are disabled to preserve local changes.");
         return;
     }
@@ -437,7 +443,8 @@ Result DownloadRelease() {
     // First the maintainer's signature: the setup is only accepted if its hash is in a checksum list
     // signed with a key GitHub never sees, and the same hash GitHub lists for the file.
     std::string sums, signature, signedHash;
-    std::string setupName = "BatteryHub-Setup-" + VersionText(out.release.version) + ".exe";
+    std::string setupName = (appversion::seelen ? "BatteryHub-Seelen-Setup-" : "BatteryHub-Setup-") +
+                            VersionText(out.release.version) + ".exe";
     if (!GetText(out.release.sumsUrl, out.release.sumsSize, deadline, sums) ||
         !GetText(out.release.signatureUrl, out.release.signatureSize, deadline, signature)) {
         out.error = cancelled ? L"Update download cancelled." : L"Could not download the update's signature. Please try again later.";
@@ -554,7 +561,9 @@ void ShowAvailable(HWND owner) {
     TASKDIALOGCONFIG config{ sizeof(config) };
     config.hwndParent = DialogOwner(owner);
     config.pszWindowTitle = T(L"BatteryHub update");
-    config.pszMainInstruction = T(L"A new version is available");
+    std::wstring instruction = appversion::seelen ?
+        (L"BatteryHub Seelen " + Widen(known.tag) + L" is available") : T(L"A new version is available");
+    config.pszMainInstruction = instruction.c_str();
     config.pszContent = content.c_str();
     config.pButtons = installed.valid ? buttons : buttons + 1;
     config.cButtons = installed.valid ? 3 : 2;

@@ -1,5 +1,6 @@
 #include "update_apply.h"
 #include "update_win.h"
+#include "app_version.h"
 #include "i18n.h"
 #include <shellapi.h>
 #include <objbase.h>
@@ -154,6 +155,17 @@ int RunApplyMode(int argc, wchar_t** argv) {
     }
     std::wstring arguments = L"/SP- /SILENT /NORESTART /RESTARTEXITCODE=3010 /WBUPDATE=1 /DIR=" + QuoteArgument(installed.directory) +
         (installed.allUsers ? L" /ALLUSERS" : L" /CURRENTUSER");
+    if (appversion::seelen) {
+        wchar_t appData[32768];
+        DWORD length = GetEnvironmentVariableW(L"APPDATA", appData, ARRAYSIZE(appData));
+        if (!length || length >= ARRAYSIZE(appData)) {
+            CloseHandle(guard);
+            CloseHandle(parent);
+            Error(L"The current user's Seelen plugin folder could not be located. Your current version was kept.");
+            return 2;
+        }
+        arguments += L" " + QuoteArgument(L"/WBUSERAPPDATA=" + std::wstring(appData, length));
+    }
     HANDLE setup = nullptr;
     if (!Launch(installer, arguments, installed.allUsers, &setup) || !setup) {
         CloseHandle(guard);
@@ -182,6 +194,8 @@ int RunApplyMode(int argc, wchar_t** argv) {
         restarted = GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES &&
                     Launch(target, L"", false, nullptr);
         if (!restarted) Error(L"BatteryHub could not reopen. Please start it manually or repair the installation.");
+        else if (confirmed && appversion::seelen)
+            Error(L"BatteryHub Seelen was updated. If the toolbar does not reconnect, restart Seelen UI; do not reset its settings.");
     } else if (code == 0 && !parentExited) {
         Error(L"The previous instance is still running. Close and reopen BatteryHub to use the update.");
     }

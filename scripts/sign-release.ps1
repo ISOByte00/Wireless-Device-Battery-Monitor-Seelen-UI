@@ -1,21 +1,22 @@
-# Signs a release's SHA256SUMS.txt with your release key, after CI has published the release:
-#   powershell -ExecutionPolicy Bypass -File scripts\sign-release.ps1 -Version 1.2.3
-# It downloads SHA256SUMS.txt from the release, shows it, signs it after you confirm, and writes
-# SHA256SUMS.txt.sig. Upload that file to the release (the script opens the page). Until then the app
-# shows the update but does not offer to install it.
+# Signs the exact SHA256SUMS.txt from a release with a private key that never enters CI.
 param(
     [Parameter(Mandatory = $true)][string]$Version,
-    [string]$KeyFile = (Join-Path $env:USERPROFILE '.wirelessbattery\release-key.wbk'),
-    [string]$SumsFile,       # sign a local SHA256SUMS.txt instead of downloading the release's
-    [string]$OutFile,        # default: SHA256SUMS.txt.sig in the current folder
-    [Security.SecureString]$Password,  # for tests; normally asked for
-    [switch]$Yes             # do not ask before signing
+    [ValidateSet('Official', 'Seelen')][string]$Channel = 'Official',
+    [string]$KeyFile,
+    [string]$SumsFile,
+    [string]$OutFile,
+    [Security.SecureString]$Password,
+    [switch]$Yes
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'release-key.psm1') -Force
-$repo = 'krisgfx9/Wireless-Device-Battery-Monitor'
+$repo = if ($Channel -eq 'Seelen') { 'ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI' } else { 'krisgfx9/Wireless-Device-Battery-Monitor' }
+if (-not $KeyFile) {
+    $folder = if ($Channel -eq 'Seelen') { '.batteryhub-seelen' } else { '.wirelessbattery' }
+    $KeyFile = Join-Path $env:USERPROFILE "$folder\release-key.wbk"
+}
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must be MAJOR.MINOR.PATCH, for example 1.2.3.' }
-if (-not (Test-Path -LiteralPath $KeyFile)) { throw "No key file at $KeyFile. Create one with scripts\new-release-key.ps1." }
+if (-not (Test-Path -LiteralPath $KeyFile)) { throw "No key file at $KeyFile. Create one with scripts\new-release-key.ps1 -Channel $Channel." }
 if (-not $OutFile) { $OutFile = Join-Path (Get-Location) 'SHA256SUMS.txt.sig' }
 
 if (-not $SumsFile) {
@@ -27,10 +28,9 @@ if (-not $SumsFile) {
 }
 $data = [IO.File]::ReadAllBytes($SumsFile)
 $text = [Text.Encoding]::ASCII.GetString($data)
-$setup = "BatteryHub-Setup-$Version.exe"
+$setup = if ($Channel -eq 'Seelen') { "BatteryHub-Seelen-Setup-$Version.exe" } else { "BatteryHub-Setup-$Version.exe" }
 if ($text -notmatch "(?m)^[0-9a-fA-F]{64} [ *]$([regex]::Escape($setup))\r?$") { throw "SHA256SUMS.txt does not list $setup." }
 
-# If this PC has the same files (for example a local build), they must match the list.
 $root = Split-Path $PSScriptRoot -Parent
 foreach ($line in $text -split "`n") {
     if ($line -match '^([0-9a-fA-F]{64}) [ *](.+?)\r?$') {
@@ -46,7 +46,7 @@ foreach ($line in $text -split "`n") {
 Write-Host ''
 Write-Host $text
 if (-not $Yes) {
-    $answer = Read-Host "Sign this list for version $Version? Only do this for a release you published (y/n)"
+    $answer = Read-Host "Sign this list for $Channel version $Version? Only do this for your release (y/n)"
     if ($answer -ne 'y') { Write-Host 'Not signed.'; exit 1 }
 }
 if (-not $Password) { $Password = Read-Host 'Key password' -AsSecureString }
@@ -56,18 +56,20 @@ $key = [Security.Cryptography.CngKey]::Import($private, [Security.Cryptography.C
 [Array]::Clear($private, 0, $private.Length)
 $ecdsa = New-Object Security.Cryptography.ECDsaCng($key)
 $ecdsa.HashAlgorithm = [Security.Cryptography.CngAlgorithm]::Sha256
-$signature = $ecdsa.SignData($data)  # IEEE P1363: 64 bytes r || s, what the app's BCrypt check expects
+$signature = $ecdsa.SignData($data)
 $publicText = Get-PublicKeyText $key
 $key.Dispose()
 
 if (-not (Test-ReleaseSignature $data $signature $publicText)) { throw 'The new signature did not verify. Nothing was written.' }
 $header = [IO.File]::ReadAllText((Join-Path $root 'src\update_public_key.h'))
-if ($header -notmatch [regex]::Escape($publicText)) {
-    Write-Warning 'This key is not in src\update_public_key.h: builds from this repository will not accept the signature.'
+$arrayName = if ($Channel -eq 'Seelen') { 'SeelenReleaseKeys' } else { 'OfficialReleaseKeys' }
+$keyBlock = [regex]::Match($header, "(?s)inline constexpr const char\* $arrayName\[\] = \{(.*?)\};")
+if (-not $keyBlock.Success -or $keyBlock.Groups[1].Value -notmatch [regex]::Escape($publicText)) {
+    Write-Warning "This key is not in ${arrayName}: builds for this channel will not accept the signature."
 }
 [IO.File]::WriteAllText($OutFile, [Convert]::ToBase64String($signature) + "`n", (New-Object Text.UTF8Encoding($false)))
 Write-Host ''
 Write-Host "Signature written to $OutFile"
-Write-Host "Upload it to the v$Version release as SHA256SUMS.txt.sig:"
+Write-Host "Upload it to the v$Version draft release as SHA256SUMS.txt.sig:"
 Write-Host "  https://github.com/$repo/releases/edit/v$Version"
 if (-not $Yes) { Start-Process "https://github.com/$repo/releases/edit/v$Version" }

@@ -3,7 +3,7 @@
 // written by CI) and SHA256SUMS.txt.sig, made by the maintainer on their own PC with
 // scripts/sign-release.ps1. The private key never goes to GitHub, so a hacked account or workflow
 // cannot publish an update this app would install: the setup's hash has to be in a list signed by
-// one of the public keys in update_public_key.h.
+// a public key for the current build channel in update_public_key.h.
 //
 // Signature: ECDSA P-256 over SHA-256 of the file's bytes, 64 bytes r || s, base64 in the .sig file.
 #include <cstddef>
@@ -15,7 +15,7 @@ constexpr std::size_t MaxSignatureBytes = 1024;
 
 // keyBase64: a BCRYPT_ECCPUBLIC_BLOB (ECS1, 32-byte X and Y), base64.
 bool VerifySignature(const std::string& data, const std::string& signatureText, const std::string& keyBase64);
-// Tries every key in update_public_key.h. False when none is configured.
+// Tries every public key configured for the current build channel. False when none is configured.
 bool VerifyReleaseSignature(const std::string& data, const std::string& signatureText);
 bool ReleaseKeyConfigured();
 // The lowercase hex SHA-256 listed for fileName in a sha256sum-style list ("<hex>  <name>" or

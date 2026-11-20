@@ -1,13 +1,16 @@
 #include "update_signature.h"
 #include "update_public_key.h"
+#include "app_version.h"
 #include "../build/version.h"
 
 #include <windows.h>
 #include <bcrypt.h>
 #include <vector>
 
-static_assert(!WB_OFFICIAL_RELEASE || updates::ReleaseKeys[0][0] != '\0',
+static_assert(!WB_OFFICIAL_RELEASE || updates::OfficialReleaseKeys[0][0] != '\0',
               "Official builds need a release public key: run scripts/new-release-key.ps1");
+static_assert(!appversion::seelen || updates::SeelenReleaseKeys[0][0] != '\0',
+              "Seelen builds need a release public key: run scripts/new-release-key.ps1 -Channel Seelen");
 
 namespace updates {
 namespace {
@@ -82,14 +85,22 @@ bool VerifySignature(const std::string& data, const std::string& signatureText, 
 }
 
 bool ReleaseKeyConfigured() {
-    for (const char* key : ReleaseKeys)
-        if (key && *key) return true;
+    if (appversion::seelen) {
+        for (const char* key : SeelenReleaseKeys) if (key && *key) return true;
+    } else {
+        for (const char* key : OfficialReleaseKeys) if (key && *key) return true;
+    }
     return false;
 }
 
 bool VerifyReleaseSignature(const std::string& data, const std::string& signatureText) {
-    for (const char* key : ReleaseKeys)
-        if (key && *key && VerifySignature(data, signatureText, key)) return true;
+    if (appversion::seelen) {
+        for (const char* key : SeelenReleaseKeys)
+            if (key && *key && VerifySignature(data, signatureText, key)) return true;
+    } else {
+        for (const char* key : OfficialReleaseKeys)
+            if (key && *key && VerifySignature(data, signatureText, key)) return true;
+    }
     return false;
 }
 

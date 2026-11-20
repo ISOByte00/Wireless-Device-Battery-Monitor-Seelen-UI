@@ -228,29 +228,31 @@ bool AssetSize(const Json& value, std::uint64_t& out) {
     }
     return out > 0 && out <= MaxDownloadBytes;
 }
-}
 
-ReleaseResult ParseRelease(const std::string& json, const Version& current, ReleaseInfo& out) {
+ReleaseResult ParseReleaseObject(const Json& root, const Version& current, const char* repository,
+                                 const std::string& installerName, bool allowPrerelease,
+                                 bool requireVersionPrefix, ReleaseInfo& out) {
     out = {};
-    Json root;
-    if (!Parser(json).Parse(root)) return ReleaseResult::Invalid;
     const Json* tag = root.Get("tag_name", Json::String);
     const Json* draft = root.Get("draft", Json::Boolean);
     const Json* pre = root.Get("prerelease", Json::Boolean);
     const Json* page = root.Get("html_url", Json::String);
     const Json* assets = root.Get("assets", Json::Array);
-    if (!tag || !draft || !pre || !page || !assets || !ParseVersion(tag->text, out.version)) return ReleaseResult::Invalid;
+    if (!tag || !draft || !pre || !page || !assets ||
+        (requireVersionPrefix && (tag->text.empty() || tag->text[0] != 'v')) ||
+        !ParseVersion(tag->text, out.version)) return ReleaseResult::Invalid;
     out.tag = tag->text;
-    out.page = std::string("https://github.com/") + Repository + "/releases/tag/" + out.tag;
+    out.page = std::string("https://github.com/") + repository + "/releases/tag/" + out.tag;
     if (out.page != page->text) { out = {}; return ReleaseResult::Invalid; }
-    if (draft->boolean || pre->boolean || !Newer(out.version, current)) { out = {}; return ReleaseResult::NoUpdate; }
-    std::string name = "BatteryHub-Setup-" + VersionText(out.version) + ".exe";
-    std::string base = std::string("https://github.com/") + Repository + "/releases/download/" + out.tag + "/";
+    if (draft->boolean || (!allowPrerelease && pre->boolean) || !Newer(out.version, current)) {
+        out = {};
+        return ReleaseResult::NoUpdate;
+    }
+    std::string base = std::string("https://github.com/") + repository + "/releases/download/" + out.tag + "/";
     unsigned matches = 0, sumsMatches = 0, signatureMatches = 0;
     for (const Json& asset : assets->array) {
         const Json* assetName = asset.Get("name", Json::String);
         if (!assetName) continue;
-        // The signed checksum list and its signature: small files at their exact release URLs.
         for (bool signature : { false, true }) {
             const char* file = signature ? "SHA256SUMS.txt.sig" : "SHA256SUMS.txt";
             if (assetName->text != file) continue;
@@ -265,16 +267,15 @@ ReleaseResult ParseRelease(const std::string& json, const Version& current, Rele
                 (signature ? out.signatureSize : out.sumsSize) = bytes;
             }
         }
-        if (assetName->text != name) continue;
+        if (assetName->text != installerName) continue;
         ++matches;
         const Json* state = asset.Get("state", Json::String);
         const Json* url = asset.Get("browser_download_url", Json::String);
         const Json* digest = asset.Get("digest", Json::String);
         const Json* size = asset.Get("size", Json::Number);
-        std::string expected = std::string("https://github.com/") + Repository + "/releases/download/" + out.tag + "/" + name;
         std::string hash;
         std::uint64_t bytes = 0;
-        if (state && state->text == "uploaded" && url && url->text == expected &&
+        if (state && state->text == "uploaded" && url && url->text == base + installerName &&
             digest && ValidDigest(digest->text, hash) && size && AssetSize(*size, bytes)) {
             out.download = url->text;
             out.sha256 = hash;
@@ -285,5 +286,40 @@ ReleaseResult ParseRelease(const std::string& json, const Version& current, Rele
     if (sumsMatches != 1) { out.sumsUrl.clear(); out.sumsSize = 0; }
     if (signatureMatches != 1) { out.signatureUrl.clear(); out.signatureSize = 0; }
     return ReleaseResult::Available;
+}
+}
+
+ReleaseResult ParseRelease(const std::string& json, const Version& current, ReleaseInfo& out) {
+    out = {};
+    Json root;
+    if (!Parser(json).Parse(root)) return ReleaseResult::Invalid;
+    // Read the version first so the historical upstream installer name remains unchanged.
+    const Json* tag = root.Get("tag_name", Json::String);
+    Version version;
+    if (!tag || !ParseVersion(tag->text, version)) return ReleaseResult::Invalid;
+    std::string name = "BatteryHub-Setup-" + VersionText(version) + ".exe";
+    return ParseReleaseObject(root, current, Repository, name, false, false, out);
+}
+
+ReleaseResult ParseSeelenReleases(const std::string& json, const Version& current, ReleaseInfo& out) {
+    out = {};
+    Json root;
+    if (!Parser(json).Parse(root) || root.type != Json::Array) return ReleaseResult::Invalid;
+    bool available = false;
+    for (const Json& release : root.array) {
+        const Json* tag = release.Get("tag_name", Json::String);
+        Version version;
+        // Non-semver releases (for example device experiments) do not belong to this channel.
+        if (!tag || tag->text.empty() || tag->text[0] != 'v' || !ParseVersion(tag->text, version)) continue;
+        ReleaseInfo candidate;
+        std::string name = "BatteryHub-Seelen-Setup-" + VersionText(version) + ".exe";
+        if (ParseReleaseObject(release, current, SeelenRepository, name, true, true, candidate) != ReleaseResult::Available ||
+            !candidate.CanInstall()) continue;
+        if (!available || Newer(candidate.version, out.version)) {
+            out = std::move(candidate);
+            available = true;
+        }
+    }
+    return available ? ReleaseResult::Available : ReleaseResult::NoUpdate;
 }
 }

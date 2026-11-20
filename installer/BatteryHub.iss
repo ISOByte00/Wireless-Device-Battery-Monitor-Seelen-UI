@@ -54,7 +54,7 @@ Source: "{#Root}\third_party\headsetcontrol\headsetcontrol.exe"; DestDir: "{app}
 Source: "{#Root}\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "{#Root}\installer\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 #if SeelenBuild
-Source: "{#Root}\third-party\seelen-ui\plugin\BatteryHub-Seelen.yml"; DestDir: "{userappdata}\com.seelen.seelen-ui\plugins"; DestName: "BatteryHub-Seelen.yml"; Flags: ignoreversion
+Source: "{#Root}\third-party\seelen-ui\plugin\BatteryHub-Seelen.yml"; DestDir: "{code:SeelenPluginDirectory}"; DestName: "BatteryHub-Seelen.yml"; Flags: ignoreversion
 #endif
 
 [InstallDelete]
@@ -79,6 +79,16 @@ const
 function IsUpdate(): Boolean;
 begin
   Result := ExpandConstant('{param:WBUPDATE|0}') = '1';
+end;
+
+function SeelenPluginDirectory(Param: String): String;
+var
+  UserAppData: String;
+begin
+  UserAppData := ExpandConstant('{param:WBUSERAPPDATA|}');
+  if UserAppData = '' then
+    UserAppData := ExpandConstant('{userappdata}');
+  Result := AddBackslash(RemoveBackslashUnlessRoot(UserAppData)) + 'com.seelen.seelen-ui\plugins';
 end;
 
 function QuitRunningApp(): Boolean;

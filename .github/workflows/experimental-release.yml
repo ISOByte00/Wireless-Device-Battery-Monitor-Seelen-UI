@@ -2,18 +2,27 @@ name: Seelen release
 
 on:
   push:
-    tags: ["v0.3.0"]
-
-env:
-  RELEASE_VERSION: 0.3.0
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to verify and publish (MAJOR.MINOR.PATCH)
+        required: true
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     steps:
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Release tag must be vMAJOR.MINOR.PATCH.' }
+          "RELEASE_VERSION=$($env:GITHUB_REF_NAME.Substring(1))" | Out-File $env:GITHUB_ENV -Append
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: feat/seelen-detection
@@ -43,7 +52,7 @@ jobs:
       - name: Package standard BatteryHub
         working-directory: standard
         shell: pwsh
-        run: ./installer/build-installer.ps1 -Version $env:RELEASE_VERSION
+        run: ./installer/build-installer.ps1 -Version $env:RELEASE_VERSION -Flavor Standard
 
       - name: Build Seelen BatteryHub
         working-directory: seelen
@@ -59,7 +68,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item "standard/dist/BatteryHub-Setup-$env:RELEASE_VERSION.exe" "release/BatteryHub-Standard-Setup-$env:RELEASE_VERSION.exe"
+          Copy-Item "standard/dist/BatteryHub-Standard-Setup-$env:RELEASE_VERSION.exe" release/
           Copy-Item "seelen/dist/BatteryHub-Seelen-Setup-$env:RELEASE_VERSION.exe" release/
           Copy-Item "seelen/dist/BatteryHub-Seelen-$env:RELEASE_VERSION-portable.zip" release/
           Copy-Item seelen/third-party/seelen-ui/plugin/BatteryHub-Seelen.yml release/
@@ -67,23 +76,16 @@ jobs:
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           }
           [IO.File]::WriteAllText((Join-Path $PWD 'release/SHA256SUMS.txt'), (($sums -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
-          $standard = git -C standard rev-parse HEAD
-          $seelen = git -C seelen rev-parse HEAD
           @"
-          # BatteryHub Seelen Integration v0.3.0
+          # BatteryHub Seelen Integration v$env:RELEASE_VERSION
 
           This is an ISOByte00 integration fork release, not an official BatteryHub release.
 
-          - Synchronizes tray/widget mode, stacked layout, Seelen integration state and the new monochrome preference with Fancy Toolbar.
-          - Adds explicit pending, no-device, disconnected, invalid-data and stale-synchronization states.
-          - Uses a request heartbeat independent from hardware scan timing so cached responses do not look current forever.
-          - Fixes native menu focus, dismissal and z-order with a short-lived topmost tool-window owner.
-          - Ships one self-contained plugin file: BatteryHub-Seelen.yml.
-          - Preserves the original BatteryHub developer attribution, licenses and Ko-fi link.
-
-          - Standard installer source: feat/seelen-detection @ $standard
-          - Seelen installer source: feat/seelen-ui-integration @ $seelen
-          - The Seelen installer is verified by the standard build against the GitHub asset digest and SHA256SUMS.txt before it can be run.
+          - Adds a Seelen-specific independent update channel.
+          - Enables manual and approximately daily automatic update checks.
+          - Requires a locally signed manifest before any installer can run.
+          - Preserves existing BatteryHub and Seelen integration settings during updates.
+          - Preserves the original BatteryHub developer attribution, license and Ko-fi link.
           "@.Trim() | Set-Content release/RELEASE_NOTES.md -NoNewline
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -91,7 +93,8 @@ jobs:
           name: seelen-release
           path: release/*
 
-  release:
+  draft:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -104,14 +107,48 @@ jobs:
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: v0.3.0
+          tag_name: ${{ github.ref_name }}
           target_commitish: ${{ github.sha }}
-          name: BatteryHub Seelen Integration v0.3.0
+          name: BatteryHub Seelen Integration ${{ github.ref_name }}
+          draft: true
           prerelease: true
           body_path: release/RELEASE_NOTES.md
           files: |
-            release/BatteryHub-Standard-Setup-0.3.0.exe
-            release/BatteryHub-Seelen-Setup-0.3.0.exe
-            release/BatteryHub-Seelen-0.3.0-portable.zip
+            release/*.exe
+            release/*.zip
             release/BatteryHub-Seelen.yml
             release/SHA256SUMS.txt
+
+  publish:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: feat/seelen-ui-integration
+          persist-credentials: false
+
+      - name: Download draft assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:RELEASE_VERSION -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Version must be MAJOR.MINOR.PATCH.' }
+          New-Item -ItemType Directory -Force release | Out-Null
+          gh release download "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY --dir release
+
+      - name: Verify signature and every release asset
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: ./scripts/verify-seelen-release.ps1 -Version $env:RELEASE_VERSION -AssetDirectory release
+
+      - name: Publish verified draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: gh release edit "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY --draft=false --prerelease

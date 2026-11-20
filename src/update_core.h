@@ -5,6 +5,7 @@
 namespace updates {
 constexpr std::uint64_t MaxDownloadBytes = 100ULL * 1024 * 1024;
 constexpr const char* Repository = "krisgfx9/Wireless-Device-Battery-Monitor";
+constexpr const char* SeelenRepository = "ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI";
 
 struct Version {
     unsigned major = 0, minor = 0, patch = 0;
@@ -28,6 +29,7 @@ struct ReleaseInfo {
 };
 enum class ReleaseResult { Invalid, NoUpdate, Available };
 ReleaseResult ParseRelease(const std::string& json, const Version& current, ReleaseInfo& out);
+ReleaseResult ParseSeelenReleases(const std::string& json, const Version& current, ReleaseInfo& out);
 bool ValidDigest(const std::string& digest, std::string& hex);
 bool AllowedDownloadUrl(const std::wstring& url);
 struct CheckSchedule {
