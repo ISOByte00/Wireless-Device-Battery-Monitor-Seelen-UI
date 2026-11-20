@@ -22,7 +22,7 @@ AppId={{7E0B5C2A-3F4D-4C8E-9B61-2D5A8F1C4E93}
 AppName=BatteryHub
 AppVersion={#AppVersion}
 #if SeelenBuild
-AppVerName=BatteryHub Seelen {#AppVersion} (Experimental)
+AppVerName=BatteryHub Seelen {#AppVersion}
 #else
 AppVerName=BatteryHub {#AppVersion}
 #endif
@@ -53,6 +53,9 @@ Source: "{#BuildExe}"; DestDir: "{app}"; DestName: "BatteryHub.exe"; Flags: igno
 Source: "{#Root}\third_party\headsetcontrol\headsetcontrol.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "{#Root}\installer\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+#if SeelenBuild
+Source: "{#Root}\third-party\seelen-ui\plugin\BatteryHub-Seelen.yml"; DestDir: "{userappdata}\com.seelen.seelen-ui\plugins"; DestName: "BatteryHub-Seelen.yml"; Flags: ignoreversion
+#endif
 
 [InstallDelete]
 ; Before 1.1.0 the app was called Wireless Battery: remove its exe and Start menu shortcut on upgrade.

@@ -24,6 +24,11 @@ std::atomic<SOCKET> g_activeClient{INVALID_SOCKET};
 HANDLE g_thread = nullptr;
 std::string g_json = "{\"status\":\"pending\",\"devices\":[]}";
 
+long long NowMilliseconds() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
 const char* KindName(DeviceKind kind) {
     switch (kind) {
         case DeviceKind::Mouse: return "mouse";
@@ -36,15 +41,22 @@ const char* KindName(DeviceKind kind) {
     }
 }
 
-std::string MakeJson(const std::vector<Device>& devices, bool isInitialScanDone) {
-    long long timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-
+std::string MakeJson(const std::vector<Device>& devices, const Settings& settings,
+                     bool isInitialScanDone) {
     std::string out = "{\"status\":\"";
     out += (isInitialScanDone ? "ready" : "pending");
     out += "\",\"timestamp\":";
-    out += std::to_string(timestamp);
-    out += ",\"devices\":[";
+    out += std::to_string(settings.lastScanTimestamp);
+    out += ",\"settings\":{\"displayMode\":\"";
+    out += settings.widgetMode ? "widget" : "tray";
+    out += "\",\"stacked\":";
+    out += settings.stacked ? "true" : "false";
+    out += ",\"monochrome\":";
+    out += settings.monochrome ? "true" : "false";
+    out += ",\"seelenIntegration\":";
+    out += settings.seelenIntegration ? "true" : "false";
+    out += ",\"pollIntervalMs\":" + std::to_string(settings.pollIntervalMs);
+    out += "},\"devices\":[";
     for (size_t i = 0; i < devices.size(); i++) {
         if (i) out += ',';
         const Device& device = devices[i];
@@ -66,6 +78,14 @@ std::string MakeJson(const std::vector<Device>& devices, bool isInitialScanDone)
         out += '}';
     }
     out += "]}";
+    return out;
+}
+
+std::string WithHeartbeat(const std::string& json) {
+    if (json.empty() || json.back() != '}') return json;
+    std::string out = json;
+    out.pop_back();
+    out += ",\"heartbeat\":" + std::to_string(NowMilliseconds()) + '}';
     return out;
 }
 
@@ -275,7 +295,7 @@ HttpResponse HandleHttpRequest(const std::string& rawRequest, const std::string&
     res.statusCode = 200;
     res.statusText = "OK";
     res.contentType = isTextStateRequest ? "text/plain; charset=utf-8" : "application/json; charset=utf-8";
-    res.body = currentJson;
+    res.body = WithHeartbeat(currentJson);
 
     std::string response = "HTTP/1.1 200 OK\r\n";
     response += "Content-Type: " + res.contentType + "\r\n";
@@ -367,8 +387,9 @@ bool IsRunning() {
     return g_running.load();
 }
 
-void Update(const std::vector<Device>& devices, bool isInitialScanDone) {
-    std::string json = MakeJson(devices, isInitialScanDone);
+void Update(const std::vector<Device>& devices, const Settings& settings,
+            bool isInitialScanDone) {
+    std::string json = MakeJson(devices, settings, isInitialScanDone);
     AcquireSRWLockExclusive(&g_lock);
     g_json = std::move(json);
     ReleaseSRWLockExclusive(&g_lock);

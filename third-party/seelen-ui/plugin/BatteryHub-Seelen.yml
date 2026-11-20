@@ -15,30 +15,72 @@ icon: LuBatteryMedium
 target: '@seelen/fancy-toolbar'
 plugin:
   id: ''
-  scopes: []
+  scopes:
+    - Date
   template: |2
 
+    const openMenu = 'open("batteryhub://show-menu")';
+    const statusButton = (text) => Button({
+      tooltip: "BatteryHub",
+      content: text,
+      onClick: openMenu,
+      style: { display: "flex", alignItems: "center", whiteSpace: "nowrap", opacity: 0.85 },
+    });
+
     if (typeof batteryHub !== "string" || !batteryHub.trim()) {
-      return "Veri bekleniyor";
+      return statusButton("BatteryHub bulunamadı");
     }
 
     let data;
     try {
       data = JSON.parse(batteryHub);
     } catch {
-      return "Veri okunamadı";
+      return statusButton("Veri hatası");
     }
 
     if (!data || typeof data !== "object" || Array.isArray(data)) {
-      return "Veri okunamadı";
+      return statusButton("Veri hatası");
     }
 
+    // Date is a reactive Seelen scope. It forces another evaluation after a failed
+    // remoteData fetch leaves the last successful response cached by the toolbar.
+    const renderTick = date;
+    const now = Date.now();
+    const heartbeat = typeof data.heartbeat === "number" && Number.isFinite(data.heartbeat)
+      ? data.heartbeat
+      : null;
+    if (heartbeat !== null && now - heartbeat > 90000) {
+      return statusButton("Bağlantı kesildi");
+    }
+
+    if (data.status === "error") {
+      return statusButton("Veri hatası");
+    }
+
+    const settings = data.settings && typeof data.settings === "object" && !Array.isArray(data.settings)
+      ? data.settings
+      : {};
+    if (settings.seelenIntegration === false) {
+      return statusButton("Seelen entegrasyonu kapalı");
+    }
+    if (settings.displayMode === "tray") {
+      return statusButton("Tray modunda");
+    }
     if (data.status === "pending") {
-      return "Veri bekleniyor";
+      return statusButton("Veri bekleniyor");
+    }
+    if (data.status !== "ready" || !Array.isArray(data.devices)) {
+      return statusButton("Veri hatası");
     }
 
-    if (!Array.isArray(data.devices)) {
-      return "Cihaz yok";
+    const timestamp = typeof data.timestamp === "number" && Number.isFinite(data.timestamp)
+      ? data.timestamp
+      : null;
+    const pollIntervalMs = typeof settings.pollIntervalMs === "number" && Number.isFinite(settings.pollIntervalMs)
+      ? Math.max(30000, settings.pollIntervalMs)
+      : 60000;
+    if (timestamp !== null && now - timestamp > pollIntervalMs + 60000) {
+      return statusButton("Senkronizasyon bekleniyor");
     }
 
     const iconForKind = {
@@ -52,32 +94,25 @@ plugin:
 
     const sanitizeDevice = (d) => {
       if (!d || typeof d !== "object" || Array.isArray(d)) return null;
-
       const rawPercent = d.percent;
       const hasValidPercent = typeof rawPercent === "number" && Number.isFinite(rawPercent) && rawPercent >= 0 && rawPercent <= 100;
       const percent = hasValidPercent ? Math.round(rawPercent) : -1;
-
       const connected = d.connected !== false;
       const asleep = Boolean(d.asleep);
       const charging = Boolean(d.charging) && connected && !asleep && percent < 100;
       const dim = Boolean(d.dim) || !connected || !hasValidPercent;
-
       const rawKind = typeof d.kind === "string" ? d.kind.toLowerCase().trim() : "other";
       const kind = iconForKind[rawKind] ? rawKind : "other";
-
       const rawName = typeof d.name === "string" ? d.name.trim() : "";
       const name = rawName || "BatteryHub";
-
       const rawLabel = typeof d.label === "string" ? d.label.trim() : "";
       const label = rawLabel.length > 8 ? rawLabel.slice(0, 8) : rawLabel;
-
       const rawTooltip = typeof d.tooltip === "string" ? d.tooltip.trim() : "";
-      const tooltip = rawTooltip || name;
 
       return {
         name,
         label,
-        tooltip,
+        tooltip: rawTooltip || name,
         kind,
         percent,
         hasValidPercent,
@@ -89,12 +124,14 @@ plugin:
     };
 
     const validDevices = data.devices.map(sanitizeDevice).filter(Boolean);
-
     if (!validDevices.length) {
-      return "Cihaz yok";
+      return statusButton("Cihaz bulunamadı");
     }
 
+    const monochrome = settings.monochrome === true;
+    const stacked = settings.stacked === true;
     const colorFor = (device) => {
+      if (monochrome) return "#ffffff";
       if (!device.connected || device.asleep || !device.hasValidPercent) return "currentColor";
       if (device.charging) return "#3b82f6";
       if (device.percent < 20) return "#ef4444";
@@ -102,23 +139,36 @@ plugin:
       return "#22c55e";
     };
 
+    const detailFor = (device) => [
+      device.hasValidPercent ? (device.percent + "%") : "—",
+      device.label ? (" " + device.label) : "",
+      monochrome && device.charging ? icon("LuZap", 12) : null,
+    ];
+
     return Group({
       content: validDevices.map((device) => Button({
         tooltip: device.tooltip,
-        content: [
-          icon(iconForKind[device.kind] || "LuBatteryMedium"),
-          device.hasValidPercent ? (device.percent + "%") : "—",
-          device.label ? (" " + device.label) : "",
-        ],
-        onClick: 'open("batteryhub://show-menu")',
+        content: stacked
+          ? [
+              icon(iconForKind[device.kind] || "LuBatteryMedium", 14),
+              Group({
+                content: detailFor(device),
+                style: { display: "flex", alignItems: "center", gap: "0.15rem", lineHeight: 1 },
+              }),
+            ]
+          : [icon(iconForKind[device.kind] || "LuBatteryMedium"), ...detailFor(device)],
+        onClick: openMenu,
         style: {
           display: "flex",
+          flexDirection: stacked ? "column" : "row",
+          justifyContent: "center",
           alignItems: "center",
-          gap: "0.25rem",
+          gap: stacked ? "0.05rem" : "0.25rem",
           color: colorFor(device),
           opacity: device.dim ? 0.55 : 1,
           whiteSpace: "nowrap",
           maxWidth: "140px",
+          lineHeight: 1,
         },
       })),
       style: {

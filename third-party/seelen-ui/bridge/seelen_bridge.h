@@ -22,10 +22,20 @@ struct Device {
     bool dim = false;
 };
 
+struct Settings {
+    bool widgetMode = true;
+    bool stacked = false;
+    bool monochrome = false;
+    bool seelenIntegration = true;
+    unsigned long pollIntervalMs = 60000;
+    long long lastScanTimestamp = 0;
+};
+
 bool Start(unsigned short port = 37842);
 void Stop();
 bool IsRunning();
-void Update(const std::vector<Device>& devices, bool isInitialScanDone = true);
+void Update(const std::vector<Device>& devices, const Settings& settings,
+            bool isInitialScanDone = true);
 
 struct HttpResponse {
     int statusCode = 200;

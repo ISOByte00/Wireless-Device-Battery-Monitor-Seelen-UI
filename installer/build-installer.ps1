@@ -46,7 +46,7 @@ Copy-Item $sourceExePath (Join-Path $stage 'BatteryHub.exe')
 Copy-Item $hscExe, installer\THIRD_PARTY_NOTICES.txt $stage
 Copy-Item LICENSE (Join-Path $stage "LICENSE.txt")
 if ($Flavor -eq 'Seelen') {
-    Copy-Item third-party\seelen-ui\plugin\BatteryHub.yaml (Join-Path $stage 'BatteryHub-Seelen-plugin.yaml')
+    Copy-Item third-party\seelen-ui\plugin\BatteryHub-Seelen.yml (Join-Path $stage 'BatteryHub-Seelen.yml')
 }
 $portableName = "BatteryHub-$Flavor-$Version-portable.zip"
 Compress-Archive -Path "$stage\*" -DestinationPath (Join-Path $root "dist\$portableName") -Force

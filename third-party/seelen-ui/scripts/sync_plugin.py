@@ -45,7 +45,8 @@ icon: {metadata['icon']}
 target: '{metadata['target']}'
 plugin:
   id: ''
-  scopes: []
+  scopes:
+    - Date
   template: |2
 """
 
@@ -71,7 +72,7 @@ def main():
     seelen_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     template_path = os.path.join(seelen_root, "plugin", "plugin", "template.js")
     metadata_path = os.path.join(seelen_root, "plugin", "metadata.yml")
-    output_path = os.path.join(seelen_root, "plugin", "BatteryHub.yaml")
+    output_path = os.path.join(seelen_root, "plugin", "BatteryHub-Seelen.yml")
 
     with open(template_path, "r", encoding="utf-8") as f:
         template_content = f.read()
@@ -80,19 +81,19 @@ def main():
 
     if "--check" in sys.argv:
         if not os.path.exists(output_path):
-            print("Error: BatteryHub.yaml does not exist.", file=sys.stderr)
+            print("Error: BatteryHub-Seelen.yml does not exist.", file=sys.stderr)
             sys.exit(1)
         with open(output_path, "r", encoding="utf-8") as f:
             current = f.read()
         if current.replace("\r\n", "\n") != new_yaml.replace("\r\n", "\n"):
-            print("Error: BatteryHub.yaml is out of sync. Run third-party/seelen-ui/scripts/sync_plugin.py.", file=sys.stderr)
+            print("Error: BatteryHub-Seelen.yml is out of sync. Run third-party/seelen-ui/scripts/sync_plugin.py.", file=sys.stderr)
             sys.exit(1)
-        print("BatteryHub.yaml is up to date.")
+        print("BatteryHub-Seelen.yml is up to date.")
         sys.exit(0)
 
     with open(output_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(new_yaml)
-    print("Successfully synchronized third-party/seelen-ui/plugin/BatteryHub.yaml")
+    print("Successfully synchronized third-party/seelen-ui/plugin/BatteryHub-Seelen.yml")
 
 
 if __name__ == "__main__":

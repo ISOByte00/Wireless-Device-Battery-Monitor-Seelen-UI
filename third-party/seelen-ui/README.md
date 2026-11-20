@@ -9,4 +9,4 @@ python third-party/seelen-ui/scripts/sync_plugin.py
 python third-party/seelen-ui/scripts/sync_plugin.py --check
 ```
 
-`BatteryHub.yaml` Seelen UI'den içe aktarılır. Plugin başka toolbar modüllerini veya Seelen `state.yml` dosyasını değiştirmez. Seelen'in eski HTTP verisini koruması plugin API davranışıdır; bu entegrasyon buna karşı bir watchdog çalıştırmaz.
+`BatteryHub-Seelen.yml` Seelen UI'ye kurulan tek, bağımsız plugin dosyasıdır. Plugin başka toolbar modüllerini veya Seelen `state.yml` dosyasını değiştirmez. Bridge cihaz tarama zamanından ayrı bir heartbeat yayımlar; plugin, Seelen'in başarısız HTTP isteğinde eski cevabı saklamasına karşı reaktif Date scope ile bu heartbeat'in yaşını denetler.

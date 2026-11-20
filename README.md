@@ -1,10 +1,10 @@
 # BatteryHub (Seelen UI Integration Fork)
 
 > [!NOTE]
-> **Experimental Fork Notice**
-> This repository is an experimental fork of [BatteryHub](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) created to integrate BatteryHub with [Seelen UI](https://seelen.io)'s Fancy Toolbar.
+> **Fork Notice**
+> This repository is an integration fork of [BatteryHub](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) created to integrate BatteryHub with [Seelen UI](https://seelen.io)'s Fancy Toolbar.
 > - **Original Author:** [krisgfx9](https://github.com/krisgfx9) (All original credits, licenses, sponsorships, and documentation belong to the upstream project).
-> - **Status:** Experimental / In Development & Testing. This is **not** an official upstream BatteryHub release.
+> - **Status:** This is **not** an official upstream BatteryHub release.
 > - **Seçimlik:** Standart derleme yalnızca Seelen UI'yi açılışta bir kez algılar; bridge, URL protokolü ve plugin desteği içermez.
 > - **Known Limitation:** In Seelen UI (v2.8.10 / v2.8.11), adding or managing external toolbar modules can occasionally trigger an upstream layout issue where previously configured modules disappear due to Seelen's `isStale` item pruning. Always backup your Seelen configuration (`state.yml`) before modifying toolbar items.
 
@@ -23,8 +23,9 @@
 
 #### Troubleshooting
 - **"Veri bekleniyor":** Bridge server is running and waiting for the initial hardware scan to complete.
-- **"Cihaz yok":** No active or unhidden battery-reporting devices are currently detected.
-- **"Veri okunamadı":** Communication issue or corrupted data payload.
+- **"Cihaz bulunamadı":** No active or unhidden battery-reporting devices are currently detected.
+- **"Veri hatası":** The bridge returned an invalid or unexpected payload.
+- **"Bağlantı kesildi":** Seelen retained an old response after BatteryHub stopped responding.
 - **Click doesn't open menu:** Verify BatteryHub is actively running in the background.
 
 ---

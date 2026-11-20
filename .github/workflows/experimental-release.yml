@@ -1,11 +1,11 @@
-name: experimental Seelen release
+name: Seelen release
 
 on:
   push:
-    tags: ["v0.2.1"]
+    tags: ["v0.3.0"]
 
 env:
-  RELEASE_VERSION: 0.2.1
+  RELEASE_VERSION: 0.3.0
 
 permissions:
   contents: read
@@ -59,10 +59,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item "standard/dist/BatteryHub-Setup-$env:RELEASE_VERSION.exe" "release/BatteryHub-Standard-Setup-$env:RELEASE_VERSION.exe"
+          Copy-Item "standard/dist/BatteryHub-Standard-Setup-$env:RELEASE_VERSION.exe" release/
           Copy-Item "seelen/dist/BatteryHub-Seelen-Setup-$env:RELEASE_VERSION.exe" release/
           Copy-Item "seelen/dist/BatteryHub-Seelen-$env:RELEASE_VERSION-portable.zip" release/
-          Copy-Item seelen/third-party/seelen-ui/plugin/BatteryHub.yaml release/BatteryHub-Seelen-plugin.yaml
+          Copy-Item seelen/third-party/seelen-ui/plugin/BatteryHub-Seelen.yml release/
           $sums = Get-ChildItem release -File | Sort-Object Name | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           }
@@ -70,12 +70,16 @@ jobs:
           $standard = git -C standard rev-parse HEAD
           $seelen = git -C seelen rev-parse HEAD
           @"
-          # BatteryHub Seelen Integration v0.2.1 (Experimental)
+          # BatteryHub Seelen Integration v0.3.0
 
-          This is an ISOByte00 experimental integration release, not an official BatteryHub release.
+          This is an ISOByte00 integration fork release, not an official BatteryHub release.
 
-          - Fixes Windows registration and repair of the batteryhub:// protocol handler.
-          - Restores the optional Ko-fi link for the original BatteryHub developer in both installers.
+          - Synchronizes tray/widget mode, stacked layout, Seelen integration state and the new monochrome preference with Fancy Toolbar.
+          - Adds explicit pending, no-device, disconnected, invalid-data and stale-synchronization states.
+          - Uses a request heartbeat independent from hardware scan timing so cached responses do not look current forever.
+          - Fixes native menu focus, dismissal and z-order with a short-lived topmost tool-window owner.
+          - Ships one self-contained plugin file: BatteryHub-Seelen.yml.
+          - Preserves the original BatteryHub developer attribution, licenses and Ko-fi link.
 
           - Standard installer source: feat/seelen-detection @ $standard
           - Seelen installer source: feat/seelen-ui-integration @ $seelen
@@ -84,7 +88,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: experimental-release
+          name: seelen-release
           path: release/*
 
   release:
@@ -95,19 +99,19 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: experimental-release
+          name: seelen-release
           path: release
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: v0.2.1
+          tag_name: v0.3.0
           target_commitish: ${{ github.sha }}
-          name: BatteryHub Seelen Integration v0.2.1 (Experimental)
+          name: BatteryHub Seelen Integration v0.3.0
           prerelease: true
           body_path: release/RELEASE_NOTES.md
           files: |
-            release/BatteryHub-Standard-Setup-0.2.1.exe
-            release/BatteryHub-Seelen-Setup-0.2.1.exe
-            release/BatteryHub-Seelen-0.2.1-portable.zip
-            release/BatteryHub-Seelen-plugin.yaml
+            release/BatteryHub-Standard-Setup-0.3.0.exe
+            release/BatteryHub-Seelen-Setup-0.3.0.exe
+            release/BatteryHub-Seelen-0.3.0-portable.zip
+            release/BatteryHub-Seelen.yml
             release/SHA256SUMS.txt
