@@ -18,30 +18,71 @@ plugin:
   scopes: []
   template: |2
 
-    if (typeof batteryHub !== "string" || !batteryHub.trim()) {
-      return "Veri bekleniyor";
-    }
+    // BatteryHub / Seelen UI Fancy Toolbar template.
+    // A failed Seelen remoteData fetch can retain the previous successful value.
+    // This template can classify the latest value it receives, but cannot
+    // independently detect a failed HTTP request after the last successful one.
+
+    const showStatus = (symbol, label, detail, color = "currentColor") => Button({
+      tooltip: detail,
+      content: [icon(symbol), " ", label],
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: "0.25rem",
+        color,
+        whiteSpace: "nowrap",
+      },
+    });
 
     let data;
-    try {
-      data = JSON.parse(batteryHub);
-    } catch {
-      return "Veri okunamadı";
+    if (typeof batteryHub === "string") {
+      if (!batteryHub.trim()) {
+        return showStatus(
+          "LuWifiOff",
+          "BatteryHub erişilemiyor",
+          "BatteryHub kapalı, Seelen entegrasyonu devre dışı veya yerel bağlantı kurulamadı."
+        );
+      }
+      try {
+        data = JSON.parse(batteryHub);
+      } catch {
+        return showStatus("LuAlertCircle", "Geçersiz yanıt", "BatteryHub tarafından gönderilen veri JSON biçiminde değil.", "#ef4444");
+      }
+    } else if (batteryHub && typeof batteryHub === "object" && !Array.isArray(batteryHub)) {
+      data = batteryHub;
+    } else {
+      return showStatus(
+        "LuWifiOff",
+        "BatteryHub erişilemiyor",
+        "BatteryHub kapalı, Seelen entegrasyonu devre dışı veya yerel bağlantı kurulamadı."
+      );
     }
 
     if (!data || typeof data !== "object" || Array.isArray(data)) {
-      return "Veri okunamadı";
+      return showStatus("LuAlertCircle", "Geçersiz yanıt", "BatteryHub beklenen veri yapısını göndermedi.", "#ef4444");
     }
 
     if (data.status === "pending") {
-      return "Veri bekleniyor";
+      return showStatus("LuRefreshCw", "Cihazlar taranıyor", "BatteryHub çalışıyor, ilk cihaz taraması sürüyor.");
     }
-
+    if (data.status === "disabled") {
+      return showStatus("LuWifiOff", "Entegrasyon kapalı", "BatteryHub ayarlarından Seelen UI entegrasyonunu etkinleştirin.");
+    }
+    if (data.status === "error" || data.status === "unavailable") {
+      return showStatus("LuAlertCircle", "Veri alınamıyor", "BatteryHub bağlantısı kuruldu fakat cihaz verisi alınamadı.", "#ef4444");
+    }
+    if (data.status !== undefined && data.status !== "ready") {
+      return showStatus("LuAlertCircle", "Bilinmeyen durum", "BatteryHub bilinmeyen bir durum kodu gönderdi.", "#eab308");
+    }
     if (!Array.isArray(data.devices)) {
-      return "Cihaz yok";
+      return showStatus("LuAlertCircle", "Cihaz verisi hatalı", "BatteryHub yanıtında geçerli bir cihaz listesi bulunamadı.", "#ef4444");
+    }
+    if (data.devices.length === 0) {
+      return showStatus("LuBatteryMedium", "Cihaz bulunamadı", "BatteryHub çalışıyor ancak görüntülenecek desteklenen cihaz yok.");
     }
 
-    const iconForKind = {
+    const icons = {
       mouse: "LuMouse",
       keyboard: "LuKeyboard",
       headset: "LuHeadphones",
@@ -50,77 +91,59 @@ plugin:
       microphone: "LuMic",
     };
 
-    const sanitizeDevice = (d) => {
-      if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+    const normalized = data.devices
+      .filter((d) => d && typeof d === "object" && !Array.isArray(d))
+      .map((d) => {
+        const kind = typeof d.kind === "string" ? d.kind.toLowerCase().trim() : "other";
+        const valid = typeof d.percent === "number" && Number.isFinite(d.percent) && d.percent >= 0 && d.percent <= 100;
+        const percent = valid ? Math.round(d.percent) : -1;
+        const connected = d.connected !== false;
+        const asleep = d.asleep === true;
+        const charging = d.charging === true && connected && !asleep && percent < 100;
+        const name = typeof d.name === "string" && d.name.trim() ? d.name.trim() : "BatteryHub cihazı";
+        const label = typeof d.label === "string" ? d.label.trim().slice(0, 8) : "";
+        const rawTooltip = typeof d.tooltip === "string" ? d.tooltip.trim() : "";
+        const description = !connected ? "Bağlı değil" : asleep ? "Uyku modunda, pil bilgisi güncel olmayabilir" : !valid ? "Pil yüzdesi bilinmiyor" : "";
+        return {
+          symbol: icons[kind] || "LuBatteryMedium",
+          percent,
+          valid,
+          connected,
+          asleep,
+          charging,
+          dim: d.dim === true || !connected || asleep || !valid,
+          label,
+          tooltip: [rawTooltip || name, description].filter(Boolean).join(" — "),
+        };
+      });
 
-      const rawPercent = d.percent;
-      const hasValidPercent = typeof rawPercent === "number" && Number.isFinite(rawPercent) && rawPercent >= 0 && rawPercent <= 100;
-      const percent = hasValidPercent ? Math.round(rawPercent) : -1;
-
-      const connected = d.connected !== false;
-      const asleep = Boolean(d.asleep);
-      const charging = Boolean(d.charging) && connected && !asleep && percent < 100;
-      const dim = Boolean(d.dim) || !connected || !hasValidPercent;
-
-      const rawKind = typeof d.kind === "string" ? d.kind.toLowerCase().trim() : "other";
-      const kind = iconForKind[rawKind] ? rawKind : "other";
-
-      const rawName = typeof d.name === "string" ? d.name.trim() : "";
-      const name = rawName || "BatteryHub";
-
-      const rawLabel = typeof d.label === "string" ? d.label.trim() : "";
-      const label = rawLabel.length > 8 ? rawLabel.slice(0, 8) : rawLabel;
-
-      const rawTooltip = typeof d.tooltip === "string" ? d.tooltip.trim() : "";
-      const tooltip = rawTooltip || name;
-
-      return {
-        name,
-        label,
-        tooltip,
-        kind,
-        percent,
-        hasValidPercent,
-        charging,
-        connected,
-        asleep,
-        dim,
-      };
-    };
-
-    const validDevices = data.devices.map(sanitizeDevice).filter(Boolean);
-
-    if (!validDevices.length) {
-      return "Cihaz yok";
+    if (!normalized.length) {
+      return showStatus("LuAlertCircle", "Cihaz verisi hatalı", "BatteryHub geçerli bir cihaz kaydı göndermedi.", "#ef4444");
     }
 
-    const colorFor = (device) => {
-      if (!device.connected || device.asleep || !device.hasValidPercent) return "currentColor";
-      if (device.charging) return "#3b82f6";
-      if (device.percent < 20) return "#ef4444";
-      if (device.percent <= 85) return "#eab308";
-      return "#22c55e";
-    };
-
     return Group({
-      content: validDevices.map((device) => Button({
-        tooltip: device.tooltip,
-        content: [
-          icon(iconForKind[device.kind] || "LuBatteryMedium"),
-          device.hasValidPercent ? (device.percent + "%") : "—",
-          device.label ? (" " + device.label) : "",
-        ],
-        onClick: 'open("batteryhub://show-menu")',
-        style: {
-          display: "flex",
-          alignItems: "center",
-          gap: "0.25rem",
-          color: colorFor(device),
-          opacity: device.dim ? 0.55 : 1,
-          whiteSpace: "nowrap",
-          maxWidth: "140px",
-        },
-      })),
+      content: normalized.map((device) => {
+        const active = device.connected && !device.asleep && device.valid;
+        const color = !active ? "currentColor" : device.charging ? "#3b82f6" : device.percent < 20 ? "#ef4444" : device.percent <= 85 ? "#eab308" : "#22c55e";
+        return Button({
+          tooltip: device.tooltip,
+          content: [
+            icon(device.symbol),
+            active ? device.percent + "%" : "—",
+            device.label ? " " + device.label : "",
+          ],
+          onClick: 'open("batteryhub://show-menu")',
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: "0.25rem",
+            color,
+            opacity: device.dim ? 0.55 : 1,
+            whiteSpace: "nowrap",
+            maxWidth: "140px",
+          },
+        });
+      }),
       style: {
         display: "flex",
         alignItems: "center",
