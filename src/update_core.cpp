@@ -289,52 +289,64 @@ ReleaseResult ParseRelease(const std::string& json, const Version& current, Rele
 
 bool ParseExperimentalSeelenRelease(const std::string& json, ReleaseInfo& out) {
     constexpr const char* repository = "ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI";
-    constexpr const char* tag = "v0.1.0";
-    constexpr const char* setup = "BatteryHub-Seelen-Setup-0.1.0.exe";
     constexpr const char* sums = "SHA256SUMS.txt";
     out = {};
     Json root;
-    if (!Parser(json).Parse(root)) return false;
-    const Json* releaseTag = root.Get("tag_name", Json::String);
-    const Json* draft = root.Get("draft", Json::Boolean);
-    const Json* page = root.Get("html_url", Json::String);
-    const Json* assets = root.Get("assets", Json::Array);
-    std::string base = std::string("https://github.com/") + repository + "/releases/download/" + tag + "/";
-    if (!releaseTag || !draft || !page || !assets || releaseTag->text != tag || draft->boolean ||
-        page->text != std::string("https://github.com/") + repository + "/releases/tag/" + tag) return false;
+    if (!Parser(json).Parse(root) || root.type != Json::Array) return false;
 
-    unsigned setupMatches = 0, sumsMatches = 0;
-    for (const Json& asset : assets->array) {
-        const Json* name = asset.Get("name", Json::String);
-        if (!name) continue;
-        if (name->text == setup) ++setupMatches;
-        else if (name->text == sums) ++sumsMatches;
-        const Json* state = asset.Get("state", Json::String);
-        const Json* url = asset.Get("browser_download_url", Json::String);
-        const Json* size = asset.Get("size", Json::Number);
-        if (!state || !url || !size || state->text != "uploaded") continue;
-        std::uint64_t bytes = 0;
-        if (!AssetSize(*size, bytes) || url->text != base + name->text) continue;
-        if (name->text == setup) {
-            const Json* digest = asset.Get("digest", Json::String);
-            std::string hash;
-            if (digest && ValidDigest(digest->text, hash)) {
-                out.download = url->text;
-                out.sha256 = hash;
-                out.size = bytes;
-            }
-        } else if (name->text == sums) {
-            if (bytes <= 64 * 1024) {
-                out.sumsUrl = url->text;
-                out.sumsSize = bytes;
+    bool found = false;
+    for (const Json& release : root.array) {
+        const Json* releaseTag = release.Get("tag_name", Json::String);
+        const Json* draft = release.Get("draft", Json::Boolean);
+        const Json* page = release.Get("html_url", Json::String);
+        const Json* assets = release.Get("assets", Json::Array);
+        Version version;
+        if (!releaseTag || !draft || !page || !assets || draft->boolean ||
+            !ParseVersion(releaseTag->text, version)) continue;
+        std::string versionText = VersionText(version);
+        std::string tag = "v" + versionText;
+        if (releaseTag->text != tag ||
+            page->text != std::string("https://github.com/") + repository + "/releases/tag/" + tag) continue;
+
+        std::string setup = "BatteryHub-Seelen-Setup-" + versionText + ".exe";
+        std::string base = std::string("https://github.com/") + repository + "/releases/download/" + tag + "/";
+        ReleaseInfo candidate;
+        candidate.version = version;
+        candidate.tag = tag;
+        candidate.page = page->text;
+        candidate.assetName = setup;
+        unsigned setupMatches = 0, sumsMatches = 0;
+        for (const Json& asset : assets->array) {
+            const Json* name = asset.Get("name", Json::String);
+            if (!name) continue;
+            if (name->text == setup) ++setupMatches;
+            else if (name->text == sums) ++sumsMatches;
+            const Json* state = asset.Get("state", Json::String);
+            const Json* url = asset.Get("browser_download_url", Json::String);
+            const Json* size = asset.Get("size", Json::Number);
+            if (!state || !url || !size || state->text != "uploaded") continue;
+            std::uint64_t bytes = 0;
+            if (!AssetSize(*size, bytes) || url->text != base + name->text) continue;
+            if (name->text == setup) {
+                const Json* digest = asset.Get("digest", Json::String);
+                std::string hash;
+                if (digest && ValidDigest(digest->text, hash)) {
+                    candidate.download = url->text;
+                    candidate.sha256 = hash;
+                    candidate.size = bytes;
+                }
+            } else if (name->text == sums && bytes <= 64 * 1024) {
+                candidate.sumsUrl = url->text;
+                candidate.sumsSize = bytes;
             }
         }
+        if (setupMatches != 1 || sumsMatches != 1 || candidate.download.empty() || candidate.sumsUrl.empty()) continue;
+        if (!found || Newer(candidate.version, out.version)) {
+            out = std::move(candidate);
+            found = true;
+        }
     }
-    if (setupMatches != 1 || sumsMatches != 1 || out.download.empty() || out.sumsUrl.empty()) { out = {}; return false; }
-    out.tag = tag;
-    out.page = std::string("https://github.com/") + repository + "/releases/tag/" + tag;
-    out.version = { 0, 1, 0 };
-    return true;
+    return found;
 }
 
 bool ChecksumHash(const std::string& sums, const std::string& filename, std::string& hash) {

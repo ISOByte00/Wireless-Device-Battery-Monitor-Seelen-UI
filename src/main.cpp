@@ -69,6 +69,7 @@ HINSTANCE g_inst;
 HWND g_hwnd;
 HANDLE g_refreshEvt, g_stopEvt, g_worker;
 UINT g_taskbarCreatedMsg;
+UINT g_showSeelenPromptMsg;
 bool g_lightTaskbar;
 bool g_wantWidget = true;      // user's choice: taskbar widget (default) or tray icons
 bool g_useWidget = false;      // what is actually shown right now
@@ -234,11 +235,19 @@ bool IsSeelenRunning() {
     return found;
 }
 
+HRESULT CALLBACK ForegroundDialog(HWND dialog, UINT notification, WPARAM, LPARAM, LONG_PTR) {
+    if (notification == TDN_CREATED) {
+        SetWindowPos(dialog, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(dialog);
+    }
+    return S_OK;
+}
+
 void OfferSeelenIntegration(bool fromMenu = false) {
     bool seelenRunning = IsSeelenRunning();
     if (!fromMenu && (g_seelenPrompted || !seelenRunning)) return;
 
-    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Download Seelen version" }, { IDNO, L"Not now" }};
+    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Install Seelen version" }, { IDNO, L"Not now" }};
     TASKDIALOGCONFIG dialog{ sizeof(dialog) };
     // g_hwnd is deliberately hidden; an invisible owner can leave TaskDialog behind
     // the foreground window.  Use no owner so the prompt is always foreground-visible.
@@ -246,12 +255,13 @@ void OfferSeelenIntegration(bool fromMenu = false) {
     dialog.pszWindowTitle = kAppName;
     dialog.pszMainInstruction = seelenRunning ? L"Seelen UI detected" : L"Seelen UI was not detected";
     dialog.pszContent = seelenRunning
-        ? L"BatteryHub can display battery levels in Seelen UI's Fancy Toolbar using an optional, unofficial integration build.\n\nThe Seelen version is provided by the ISOByte00 experimental fork."
+        ? L"You're using Seelen UI. The standard BatteryHub taskbar indicator may not be visible.\n\nInstall the Seelen-compatible version to display device battery levels in the Fancy Toolbar."
         : L"Seelen UI does not appear to be running, but you can still download the optional Seelen integration build.";
     dialog.pButtons = buttons;
     dialog.cButtons = ARRAYSIZE(buttons);
     dialog.nDefaultButton = IDNO;
-    dialog.pszFooter = L"This is not an official BatteryHub release. BatteryHub never runs a downloaded file without your confirmation.";
+    dialog.pszFooter = L"Experimental, unofficial build. The installer is verified before you are asked to run it.";
+    dialog.pfCallback = ForegroundDialog;
     int choice = IDNO;
     HRESULT shown = TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
     if (FAILED(shown)) {
@@ -1109,6 +1119,10 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         Reconcile();
         return 0;
     }
+    if (msg == g_showSeelenPromptMsg && msg != 0) {
+        OfferSeelenIntegration();
+        return 0;
+    }
     switch (msg) {
         case WM_RESULTS: {
             auto* v = reinterpret_cast<std::vector<DeviceStatus>*>(lp);
@@ -1291,9 +1305,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     }
     g_inst = inst;
     g_demo = cmdLine && wcsstr(cmdLine, L"--demo");
+    g_showSeelenPromptMsg = RegisterWindowMessageW(L"BatteryHub.ShowSeelenIntegrationPrompt");
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\WirelessBatteryTray");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
+    if (!mutex) return 1;
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (HWND existing = FindWindowW(L"WirelessBatteryWnd", nullptr))
+            PostMessageW(existing, g_showSeelenPromptMsg, 0, 0);
+        CloseHandle(mutex);
+        return 0;
+    }
     updates::Initialize();
 
     g_lightTaskbar = ReadLightTaskbar();
@@ -1352,5 +1373,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     if (notify) UnregisterDeviceNotification(notify);
     if (g_worker) CloseHandle(g_worker);
     ReleaseMutex(mutex);
+    CloseHandle(mutex);
     return 0;
 }

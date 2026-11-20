@@ -166,7 +166,7 @@ Result FetchRelease() {
 
 Result FetchExperimentalSeelenRelease() {
     Result out;
-    constexpr const wchar_t* endpoint = L"/repos/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases/tags/v0.1.0";
+    constexpr const wchar_t* endpoint = L"/repos/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases?per_page=100";
     ULONGLONG deadline = GetTickCount64() + 30000;
     HINTERNET session = WinHttpOpen(L"BatteryHub/Seelen", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -525,9 +525,8 @@ Result DownloadExperimentalSeelenRelease() {
     out.success = false;
     ULONGLONG deadline = GetTickCount64() + 600000;
     std::string sums, checksum;
-    constexpr const char* setupName = "BatteryHub-Seelen-Setup-0.1.0.exe";
     if (!GetText(out.release.sumsUrl, out.release.sumsSize, deadline, sums) ||
-        !ChecksumHash(sums, setupName, checksum) || checksum != out.release.sha256) {
+        !ChecksumHash(sums, out.release.assetName, checksum) || checksum != out.release.sha256) {
         out.error = cancelled ? L"Download cancelled." :
             L"The experimental release checksum could not be verified. Nothing was installed.";
         return out;
@@ -535,7 +534,7 @@ Result DownloadExperimentalSeelenRelease() {
     std::wstring directory = NewDownloadDirectory();
     if (directory.empty()) { out.error = L"Could not create a temporary download folder."; return out; }
     std::wstring partial = directory + L"\\seelen-setup.part";
-    std::wstring final = directory + L"\\BatteryHub-Seelen-Setup-0.1.0.exe";
+    std::wstring final = directory + L"\\" + Widen(out.release.assetName);
     HANDLE file = CreateFileW(partial.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     bool complete = file != INVALID_HANDLE_VALUE && HttpGet(Widen(out.release.download), out.release.size, deadline, true,
         [&](const char* data, DWORD n) {
@@ -696,9 +695,13 @@ void DownloadSeelenInstaller(HWND owner) {
     TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Run installer" }, { IDNO, L"Cancel and delete" }};
     TASKDIALOGCONFIG confirm{ sizeof(confirm) };
     confirm.hwndParent = DialogOwner(owner);
-    confirm.pszWindowTitle = L"BatteryHub Seelen integration";
-    confirm.pszMainInstruction = L"The Seelen installer was verified";
-    confirm.pszContent = L"Run BatteryHub-Seelen-Setup-0.1.0.exe now?\n\nThis is an experimental ISOByte00 build. Its SHA-256 matches both the GitHub release asset and SHA256SUMS.txt, but it is not presented as an official or signed BatteryHub package.";
+    std::wstring versionTitle = L"BatteryHub Seelen v" + Widen(VersionText(downloaded.release.version));
+    std::wstring mainInstruction = versionTitle + L" is verified";
+    std::wstring confirmText = L"Run " + Widen(downloaded.release.assetName) +
+        L" now?\n\nThis experimental, unofficial build passed both the GitHub asset digest and SHA256SUMS.txt verification.";
+    confirm.pszWindowTitle = versionTitle.c_str();
+    confirm.pszMainInstruction = mainInstruction.c_str();
+    confirm.pszContent = confirmText.c_str();
     confirm.pButtons = buttons;
     confirm.cButtons = ARRAYSIZE(buttons);
     confirm.nDefaultButton = IDNO;
