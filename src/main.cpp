@@ -200,9 +200,11 @@ void ApplyMenuTheme(bool light) {
 }
 
 std::wstring ExePath() {
-    wchar_t p[MAX_PATH];
-    GetModuleFileNameW(nullptr, p, MAX_PATH);
-    return p;
+    std::wstring path(32768, L'\0');
+    DWORD length = GetModuleFileNameW(nullptr, path.data(), (DWORD)path.size());
+    if (!length || length >= path.size()) return L"";
+    path.resize(length);
+    return path;
 }
 
 bool ShowMenuOnRunningInstance() {
@@ -241,70 +243,104 @@ bool IsSeelenRunning() {
 #endif
 
 #if defined(SEELEN_INTEGRATION)
+constexpr const wchar_t* kSeelenProtocolKey = L"Software\\Classes\\batteryhub";
+constexpr const wchar_t* kSeelenProtocolDescription = L"URL:BatteryHub Seelen menu";
+
+bool ReadProtocolString(HKEY key, const wchar_t* name, std::wstring& value) {
+    wchar_t data[32768] = {};
+    DWORD bytes = sizeof(data);
+    if (RegGetValueW(key, nullptr, name, RRF_RT_REG_SZ, nullptr, data, &bytes) != ERROR_SUCCESS ||
+        bytes < sizeof(wchar_t) || bytes > sizeof(data) || bytes % sizeof(wchar_t) != 0 ||
+        data[bytes / sizeof(wchar_t) - 1] != L'\0') return false;
+    value = data;
+    return true;
+}
+
+bool ReadProtocolCommand(HKEY rootKey, std::wstring& command) {
+    HKEY commandKey = nullptr;
+    if (RegOpenKeyExW(rootKey, L"shell\\open\\command", 0, KEY_READ, &commandKey) != ERROR_SUCCESS) return false;
+    bool read = ReadProtocolString(commandKey, nullptr, command);
+    RegCloseKey(commandKey);
+    return read;
+}
+
+bool IsBatteryHubCommand(const std::wstring& command) {
+    const std::wstring suffix = L"\" --show-menu \"%1\"";
+    size_t quote = command.size() > 1 && command[0] == L'\"' ? command.find(L'\"', 1) : std::wstring::npos;
+    size_t slash = quote == std::wstring::npos ? std::wstring::npos : command.find_last_of(L"\\/", quote);
+    return command.size() >= suffix.size() && quote != std::wstring::npos && slash != std::wstring::npos &&
+        _wcsicmp(command.c_str() + command.size() - suffix.size(), suffix.c_str()) == 0 &&
+        _wcsicmp(command.substr(slash + 1, quote - slash - 1).c_str(), L"BatteryHub.exe") == 0;
+}
+
+bool IsBatteryHubOwnedProtocolKey(HKEY rootKey) {
+    std::wstring description, command;
+    return (ReadProtocolString(rootKey, nullptr, description) &&
+            _wcsicmp(description.c_str(), kSeelenProtocolDescription) == 0) ||
+           (ReadProtocolCommand(rootKey, command) && IsBatteryHubCommand(command));
+}
+
 bool IsBatteryHubProtocolKey(HKEY rootKey) {
-    wchar_t desc[256] = {};
-    DWORD size = sizeof(desc);
-    DWORD type = 0;
-    const wchar_t expectedDescription[] = L"URL:BatteryHub Seelen menu";
-    bool hasExpectedDescription = RegQueryValueExW(rootKey, nullptr, nullptr, &type,
-        reinterpret_cast<BYTE*>(desc), &size) == ERROR_SUCCESS && type == REG_SZ &&
-        _wcsicmp(desc, expectedDescription) == 0;
-    HKEY cmdKey = nullptr;
-    if (RegOpenKeyExW(rootKey, L"shell\\open\\command", 0, KEY_READ, &cmdKey) == ERROR_SUCCESS) {
-        wchar_t cmd[MAX_PATH * 2] = {};
-        size = sizeof(cmd);
-        if (RegQueryValueExW(cmdKey, nullptr, nullptr, &type, reinterpret_cast<BYTE*>(cmd), &size) == ERROR_SUCCESS && type == REG_SZ) {
-            RegCloseKey(cmdKey);
-            std::wstring value = cmd;
-            const std::wstring suffix = L"\" --show-menu \"%1\"";
-            size_t quote = value.find(L'\"', 1);
-            size_t slash = quote == std::wstring::npos ? std::wstring::npos : value.find_last_of(L"\\/", quote);
-            bool hasExpectedSuffix = value.size() >= suffix.size() &&
-                _wcsicmp(value.c_str() + value.size() - suffix.size(), suffix.c_str()) == 0;
-            bool hasBatteryHubExe = quote != std::wstring::npos && slash != std::wstring::npos &&
-                _wcsicmp(value.substr(slash + 1, quote - slash - 1).c_str(), L"BatteryHub.exe") == 0;
-            if (hasExpectedDescription && hasExpectedSuffix && hasBatteryHubExe) return true;
-        } else {
-            RegCloseKey(cmdKey);
-        }
-    }
-    return false;
+    std::wstring description, command;
+    wchar_t protocolValue = L'\1';
+    DWORD protocolBytes = sizeof(protocolValue);
+    DWORD protocolType = 0;
+    std::wstring executable = ExePath();
+    std::wstring expectedCommand = L"\"" + executable + L"\" --show-menu \"%1\"";
+    return !executable.empty() &&
+        ReadProtocolString(rootKey, nullptr, description) &&
+        _wcsicmp(description.c_str(), kSeelenProtocolDescription) == 0 &&
+        RegQueryValueExW(rootKey, L"URL Protocol", nullptr, &protocolType,
+            reinterpret_cast<BYTE*>(&protocolValue), &protocolBytes) == ERROR_SUCCESS &&
+        protocolType == REG_SZ && protocolBytes == sizeof(wchar_t) && protocolValue == L'\0' &&
+        ReadProtocolCommand(rootKey, command) && _wcsicmp(command.c_str(), expectedCommand.c_str()) == 0;
 }
 
 // Registered only for the explicit Seelen integration mode. The protocol launcher exits after it
 // hands the request to the normal BatteryHub window, so it never becomes a second running app.
-void RegisterSeelenMenuProtocol() {
+bool RegisterSeelenMenuProtocol() {
     HKEY key = nullptr;
-    std::wstring expectedCmd = L"\"" + ExePath() + L"\" --show-menu \"%1\"";
+    std::wstring executable = ExePath();
+    if (executable.empty()) return false;
+    std::wstring expectedCmd = L"\"" + executable + L"\" --show-menu \"%1\"";
 
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub", 0, KEY_READ, &key) == ERROR_SUCCESS) {
-        bool isOurs = IsBatteryHubProtocolKey(key);
+    LSTATUS openStatus = RegOpenKeyExW(HKEY_CURRENT_USER, kSeelenProtocolKey, 0, KEY_READ, &key);
+    if (openStatus == ERROR_SUCCESS) {
+        bool valid = IsBatteryHubProtocolKey(key);
+        bool isOurs = IsBatteryHubOwnedProtocolKey(key);
         RegCloseKey(key);
-        if (!isOurs) return;  // Do not overwrite third-party protocol registrations
-    }
+        if (valid) return true;
+        if (!isOurs) return false;  // Do not overwrite third-party protocol registrations
+    } else if (openStatus != ERROR_FILE_NOT_FOUND) return false;
 
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub", 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return;
-    const wchar_t description[] = L"URL:BatteryHub Seelen menu";
-    RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(description), sizeof(description));
-    RegSetValueExW(key, L"URL Protocol", 0, REG_SZ, nullptr, 0);
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kSeelenProtocolKey, 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+        return false;
+    const wchar_t emptyValue[] = L"";
+    bool rootWritten = RegSetValueExW(key, nullptr, 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(kSeelenProtocolDescription),
+        (DWORD)((wcslen(kSeelenProtocolDescription) + 1) * sizeof(wchar_t))) == ERROR_SUCCESS &&
+        RegSetValueExW(key, L"URL Protocol", 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(emptyValue), sizeof(emptyValue)) == ERROR_SUCCESS;
     RegCloseKey(key);
+    if (!rootWritten) return false;
 
     if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub\\shell\\open\\command", 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) != ERROR_SUCCESS)
-        return;
-    RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(expectedCmd.c_str()),
-                   (DWORD)((expectedCmd.size() + 1) * sizeof(wchar_t)));
+        return false;
+    bool commandWritten = RegSetValueExW(key, nullptr, 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(expectedCmd.c_str()),
+        (DWORD)((expectedCmd.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
     RegCloseKey(key);
+    if (commandWritten) SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+    return commandWritten;
 }
 
 void UnregisterSeelenMenuProtocol() {
     HKEY key = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub", 0, KEY_READ, &key) == ERROR_SUCCESS) {
-        bool isOurs = IsBatteryHubProtocolKey(key);
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kSeelenProtocolKey, 0, KEY_READ, &key) == ERROR_SUCCESS) {
+        bool isOurs = IsBatteryHubOwnedProtocolKey(key);
         RegCloseKey(key);
-        if (isOurs) {
-            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\Classes\\batteryhub");
-        }
+        if (isOurs && RegDeleteTreeW(HKEY_CURRENT_USER, kSeelenProtocolKey) == ERROR_SUCCESS)
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     }
 }
 
@@ -1560,13 +1596,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     battery_history::Initialize(g_demo);
     MaybeOfferSeelenIntegration();
 #if defined(SEELEN_INTEGRATION)
+    UpdateSeelenBridge();
     if (!g_seelenGuideShown) {
         if (ShowSeelenGuide()) {
             g_seelenGuideShown = true;
             SaveBoolSetting(L"SeelenFirstRunGuideShown", true);
         }
     }
-    UpdateSeelenBridge();
 #endif
     Reconcile();
     UpdatePlaceholder();  // something to click on until the first poll finishes
