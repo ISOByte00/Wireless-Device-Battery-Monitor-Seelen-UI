@@ -52,7 +52,7 @@ jobs:
       - name: Package standard BatteryHub
         working-directory: standard
         shell: pwsh
-        run: ./installer/build-installer.ps1 -Version $env:RELEASE_VERSION -Flavor Standard
+        run: ./installer/build-installer.ps1 -Version $env:RELEASE_VERSION
 
       - name: Build Seelen BatteryHub
         working-directory: seelen
@@ -68,7 +68,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item "standard/dist/BatteryHub-Standard-Setup-$env:RELEASE_VERSION.exe" release/
+          Copy-Item "standard/dist/BatteryHub-Setup-$env:RELEASE_VERSION.exe" "release/BatteryHub-Standard-Setup-$env:RELEASE_VERSION.exe"
           Copy-Item "seelen/dist/BatteryHub-Seelen-Setup-$env:RELEASE_VERSION.exe" release/
           Copy-Item "seelen/dist/BatteryHub-Seelen-$env:RELEASE_VERSION-portable.zip" release/
           Copy-Item seelen/third-party/seelen-ui/plugin/BatteryHub-Seelen.yml release/
