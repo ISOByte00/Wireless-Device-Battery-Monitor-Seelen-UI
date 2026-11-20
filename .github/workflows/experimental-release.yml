@@ -2,7 +2,10 @@ name: experimental Seelen release
 
 on:
   push:
-    tags: ["v0.1.1"]
+    tags: ["v0.2.0"]
+
+env:
+  RELEASE_VERSION: 0.2.0
 
 permissions:
   contents: read
@@ -32,8 +35,8 @@ jobs:
         working-directory: standard
         shell: msys2 {0}
         run: |
-          make VERSION=0.1.1 CHANNEL=dev
-          make test VERSION=0.1.1 CHANNEL=dev
+          make VERSION="$RELEASE_VERSION" CHANNEL=dev
+          make test VERSION="$RELEASE_VERSION" CHANNEL=dev
 
       - name: Install Inno Setup
         shell: pwsh
@@ -42,14 +45,14 @@ jobs:
       - name: Package standard BatteryHub
         working-directory: standard
         shell: pwsh
-        run: ./installer/build-installer.ps1 -Version 0.1.1
+        run: ./installer/build-installer.ps1 -Version $env:RELEASE_VERSION
 
       - name: Build and test Seelen BatteryHub
         working-directory: seelen
         shell: msys2 {0}
         run: |
-          make SEELEN_INTEGRATION=1 VERSION=0.1.1 CHANNEL=seelen
-          make test VERSION=0.1.1 CHANNEL=seelen
+          make SEELEN_INTEGRATION=1 VERSION="$RELEASE_VERSION" CHANNEL=seelen
+          make test VERSION="$RELEASE_VERSION" CHANNEL=seelen
           make test-seelen-bridge
 
       - name: Verify Seelen plugin
@@ -59,18 +62,31 @@ jobs:
           python third-party/seelen-ui/scripts/sync_plugin.py --check
           node third-party/seelen-ui/tests/seelen_plugin_test.js
 
+      - name: Verify v0.2.0 integration behavior
+        shell: pwsh
+        run: |
+          $standardCore = Get-Content standard/src/update_core.cpp -Raw
+          $standardWin = Get-Content standard/src/update_win.cpp -Raw
+          $seelenMain = Get-Content seelen/src/main.cpp -Raw
+          $installer = Get-Content seelen/installer/BatteryHub.iss -Raw
+          if ($standardWin -notmatch '/releases\?per_page=100') { throw 'Standard build does not query the release list.' }
+          if ($standardCore -notmatch 'BatteryHub-Seelen-Setup-' -or $standardCore -notmatch 'Newer\(candidate.version, out.version\)') { throw 'Dynamic Seelen release selection is missing.' }
+          if ($seelenMain -notmatch 'LoadBoolSetting\(L"SeelenIntegrationEnabled", true\)') { throw 'Seelen integration is not enabled by default.' }
+          if ($seelenMain -notmatch 'SaveBoolSetting\(L"SeelenIntegrationEnabled", g_seelenIntegration\)') { throw 'The user Seelen integration preference is not persisted.' }
+          if ($installer -match 'seelen\.io/resources/review') { throw 'Installer must not open the plugin page.' }
+
       - name: Package Seelen BatteryHub
         working-directory: seelen
         shell: pwsh
-        run: ./installer/build-installer.ps1 -Version 0.1.1 -Flavor Seelen
+        run: ./installer/build-installer.ps1 -Version $env:RELEASE_VERSION -Flavor Seelen
 
       - name: Assemble release files and checksums
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item standard/dist/BatteryHub-Setup-0.1.1.exe release/BatteryHub-Standard-Setup-0.1.1.exe
-          Copy-Item seelen/dist/BatteryHub-Seelen-Setup-0.1.1.exe release/
-          Copy-Item seelen/dist/BatteryHub-Seelen-0.1.1-portable.zip release/
+          Copy-Item "standard/dist/BatteryHub-Setup-$env:RELEASE_VERSION.exe" "release/BatteryHub-Standard-Setup-$env:RELEASE_VERSION.exe"
+          Copy-Item "seelen/dist/BatteryHub-Seelen-Setup-$env:RELEASE_VERSION.exe" release/
+          Copy-Item "seelen/dist/BatteryHub-Seelen-$env:RELEASE_VERSION-portable.zip" release/
           Copy-Item seelen/third-party/seelen-ui/plugin/BatteryHub.yaml release/BatteryHub-Seelen-plugin.yaml
           $sums = Get-ChildItem release -File | Sort-Object Name | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
@@ -79,9 +95,15 @@ jobs:
           $standard = git -C standard rev-parse HEAD
           $seelen = git -C seelen rev-parse HEAD
           @"
-          # BatteryHub Seelen Integration v0.1.1 (Experimental)
+          # BatteryHub Seelen Integration v0.2.0 (Experimental)
 
           This is an ISOByte00 experimental integration release, not an official BatteryHub release.
+
+          - Detects Seelen UI on the standard build's first launch and offers a visible guided upgrade.
+          - Selects, downloads and verifies the newest compatible Seelen release dynamically.
+          - Uses a cleaner installer with no automatic plugin-page launch.
+          - Enables Fancy Toolbar integration by default while preserving later user choices.
+          - Provides a clearer three-step plugin and Fancy Toolbar setup guide.
 
           - Standard installer source: feat/seelen-detection @ $standard
           - Seelen installer source: feat/seelen-ui-integration @ $seelen
@@ -106,14 +128,14 @@ jobs:
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: v0.1.1
+          tag_name: v0.2.0
           target_commitish: ${{ github.sha }}
-          name: BatteryHub Seelen Integration v0.1.1 (Experimental)
+          name: BatteryHub Seelen Integration v0.2.0 (Experimental)
           prerelease: true
           body_path: release/RELEASE_NOTES.md
           files: |
-            release/BatteryHub-Standard-Setup-0.1.1.exe
-            release/BatteryHub-Seelen-Setup-0.1.1.exe
-            release/BatteryHub-Seelen-0.1.1-portable.zip
+            release/BatteryHub-Standard-Setup-0.2.0.exe
+            release/BatteryHub-Seelen-Setup-0.2.0.exe
+            release/BatteryHub-Seelen-0.2.0-portable.zip
             release/BatteryHub-Seelen-plugin.yaml
             release/SHA256SUMS.txt

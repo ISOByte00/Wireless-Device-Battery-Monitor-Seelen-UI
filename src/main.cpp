@@ -91,18 +91,40 @@ bool g_seelenBridgeActive = false;
 #endif
 
 #if defined(SEELEN_INTEGRATION)
-void ShowSeelenGuide() {
+HRESULT CALLBACK SeelenGuideDialog(HWND dialog, UINT notification, WPARAM, LPARAM hyperlink, LONG_PTR) {
+    if (notification == TDN_CREATED) {
+        SetWindowPos(dialog, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(dialog);
+    } else if (notification == TDN_HYPERLINK_CLICKED && hyperlink) {
+        ShellExecuteW(nullptr, L"open", reinterpret_cast<const wchar_t*>(hyperlink), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+    return S_OK;
+}
+
+bool ShowSeelenGuide() {
     TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Open plugin page" }, { IDNO, L"Got it" }};
     TASKDIALOGCONFIG dialog{ sizeof(dialog) };
+    dialog.dwFlags = TDF_ENABLE_HYPERLINKS;
     dialog.pszWindowTitle = kAppName;
-    dialog.pszMainInstruction = L"Welcome to BatteryHub for Seelen UI";
-    dialog.pszContent = L"BatteryHub can display your mouse, keyboard, headset and other device battery levels in Seelen UI's Fancy Toolbar.\n\n1. Install the BatteryHub plugin from Seelen UI.\n2. Right-click BatteryHub and enable Show BatteryHub in Seelen toolbar.\n3. Add the BatteryHub plugin to your Fancy Toolbar layout.\n4. Your device battery levels will appear automatically.";
+    dialog.pszMainInstruction = L"Set up BatteryHub in Fancy Toolbar";
+    dialog.pszContent =
+        L"Step 1 - Install the plugin\n"
+        L"Open the BatteryHub plugin page in Seelen UI and install it. Installing the plugin alone does not add it to your toolbar.\n\n"
+        L"Step 2 - Add it to Fancy Toolbar\n"
+        L"Open Seelen UI Settings and select Fancy Toolbar. In the toolbar layout editor, find BatteryHub and add it to the section you want.\n\n"
+        L"Step 3 - Done\n"
+        L"Battery levels for devices detected by BatteryHub should now appear in the toolbar. The integration is already enabled; you can change it later from the BatteryHub menu.\n\n"
+        L"Detailed documentation:\n"
+        L"<a href=\"https://github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI\">github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI</a>";
     dialog.pButtons = buttons;
     dialog.cButtons = ARRAYSIZE(buttons);
     dialog.nDefaultButton = IDNO;
+    dialog.pfCallback = SeelenGuideDialog;
     int choice = IDNO;
-    if (SUCCEEDED(TaskDialogIndirect(&dialog, &choice, nullptr, nullptr)) && choice == IDYES)
+    HRESULT shown = TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
+    if (SUCCEEDED(shown) && choice == IDYES)
         ShellExecuteW(nullptr, L"open", L"https://seelen.io/resources/review/FnhWFEKvR0WJ-RJW4_nmQQ", nullptr, nullptr, SW_SHOWNORMAL);
+    return SUCCEEDED(shown);
 }
 #endif
 std::atomic<DWORD> g_pollIntervalMs{ 60 * 1000 };  // set from the menu, read by the worker thread
@@ -199,6 +221,7 @@ std::vector<TrayEntry*> OrderedEntries(bool shownOnly);
 void PublishSeelenState(const std::vector<TrayEntry*>& list);
 #endif
 
+#if !defined(SEELEN_INTEGRATION)
 bool IsSeelenRunning() {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return false;
@@ -215,6 +238,7 @@ bool IsSeelenRunning() {
     CloseHandle(snapshot);
     return found;
 }
+#endif
 
 #if defined(SEELEN_INTEGRATION)
 bool IsBatteryHubProtocolKey(HKEY rootKey) {
@@ -302,10 +326,10 @@ void UpdateSeelenBridge() {
 
 void MaybeOfferSeelenIntegration(bool fromMenu = false) {
 #if defined(SEELEN_INTEGRATION)
-    if (g_seelenServer || (!fromMenu && g_seelenPrompted) || !IsSeelenRunning()) return;
+    (void)fromMenu;
+    return;
 #else
     if ((!fromMenu && g_seelenPrompted) || !IsSeelenRunning()) return;
-#endif
     g_seelenPrompted = true;
     SaveBoolSetting(L"SeelenIntegrationPrompted", true);
     TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Seelen sürümünü indir" }, { IDNO, L"Şimdi değil" }};
@@ -321,11 +345,6 @@ void MaybeOfferSeelenIntegration(bool fromMenu = false) {
     int choice = IDNO;
     TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
     if (choice != IDYES) return;
-#if defined(SEELEN_INTEGRATION)
-    g_seelenIntegration = true;
-    SaveBoolSetting(L"SeelenIntegrationEnabled", true);
-    UpdateSeelenBridge();
-#else
     ShellExecuteW(nullptr, L"open", L"https://github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases", nullptr, nullptr, SW_SHOWNORMAL);
 #endif
 }
@@ -1524,7 +1543,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     g_brandColors = LoadBrandColors();
     g_stacked = LoadStacked();
 #if defined(SEELEN_INTEGRATION)
-    g_seelenIntegration = LoadBoolSetting(L"SeelenIntegrationEnabled", false);
+    g_seelenIntegration = LoadBoolSetting(L"SeelenIntegrationEnabled", true);
 #endif
     g_seelenPrompted = LoadBoolSetting(L"SeelenIntegrationPrompted", false);
     g_seelenGuideShown = LoadBoolSetting(L"SeelenFirstRunGuideShown", false);
@@ -1542,9 +1561,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     MaybeOfferSeelenIntegration();
 #if defined(SEELEN_INTEGRATION)
     if (!g_seelenGuideShown) {
-        ShowSeelenGuide();
-        g_seelenGuideShown = true;
-        SaveBoolSetting(L"SeelenFirstRunGuideShown", true);
+        if (ShowSeelenGuide()) {
+            g_seelenGuideShown = true;
+            SaveBoolSetting(L"SeelenFirstRunGuideShown", true);
+        }
     }
     UpdateSeelenBridge();
 #endif

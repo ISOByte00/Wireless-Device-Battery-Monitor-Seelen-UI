@@ -10,16 +10,16 @@
 
 ### Seelen UI Integration
 
-- **Standard build:** Seelen UI algılanırsa kullanıcıya Seelen derlemesinin GitHub Releases sayfası önerilir. Uygun bir Release yayımlanana kadar otomatik indirme ya da kurulum yapılmaz.
-- **Seelen build:** `make SEELEN_INTEGRATION=1` ile oluşturulur. Mevcut pil taramasını kullanır; yalnızca bu derlemede `127.0.0.1:37842/seelen/state-text` bridge'i ve `batteryhub://show-menu` protokolü bulunur.
+- **Standard build:** Seelen UI algılanırsa en yeni uygun Seelen installer'ını indirme, doğrulama ve çalıştırma akışını kullanıcıya bir kez önerir.
+- **Seelen build:** `make SEELEN_INTEGRATION=1` ile oluşturulur. Fancy Toolbar entegrasyonu ilk kurulumda açıktır; kullanıcının sonraki tercihi korunur. Yalnızca bu derlemede `127.0.0.1:37842/seelen/state-text` bridge'i ve `batteryhub://show-menu` protokolü bulunur.
 - **Protocol Launcher:** Clicking any device in the Seelen Fancy Toolbar triggers the `batteryhub://show-menu` protocol, activating the native menu on the running instance without starting a secondary process.
 - **Known limitation:** Seelen UI'nin `isStale` toolbar temizleme davranışı Seelen tarafındadır; bu fork toolbar düzenini veya `state.yml` dosyasını değiştirmez.
 
 #### How to Enable
 1. Run BatteryHub.
-2. Standart derlemede menüdeki **Seelen UI integration...** seçeneğiyle Releases sayfasına tekrar erişebilirsin. Seelen derlemesinde **Show BatteryHub in Seelen toolbar** seçeneğini aç.
-3. `third-party/seelen-ui/plugin/BatteryHub.yaml` dosyasını Seelen UI plugins dizinine koy (veya Seelen UI Settings'ten içe aktar).
-4. Add the `@isobyte/batteryhub` module to your Fancy Toolbar layout.
+2. Standart derlemede menüdeki **Seelen UI integration...** seçeneğiyle kurulum akışını tekrar açabilirsin.
+3. İlk kullanım rehberindeki **Open plugin page** ile plugin'i yükle.
+4. Seelen UI Settings içindeki **Fancy Toolbar** düzenleyicisinden BatteryHub modülünü istediğin bölüme ekle.
 
 #### Troubleshooting
 - **"Veri bekleniyor":** Bridge server is running and waiting for the initial hardware scan to complete.

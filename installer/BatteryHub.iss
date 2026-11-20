@@ -21,7 +21,11 @@
 AppId={{7E0B5C2A-3F4D-4C8E-9B61-2D5A8F1C4E93}
 AppName=BatteryHub
 AppVersion={#AppVersion}
+#if SeelenBuild
+AppVerName=BatteryHub Seelen {#AppVersion} (Experimental)
+#else
 AppVerName=BatteryHub {#AppVersion}
+#endif
 AppPublisher=BatteryHub contributors
 DefaultDirName={autopf}\BatteryHub
 DisableProgramGroupPage=yes
@@ -60,10 +64,6 @@ Name: "{autoprograms}\BatteryHub"; Filename: "{app}\BatteryHub.exe"
 
 [Run]
 Filename: "{app}\BatteryHub.exe"; Description: "Start BatteryHub now"; Flags: nowait postinstall skipifsilent; Check: not IsUpdate
-Filename: "https://ko-fi.com/krisgfx"; Description: "Enjoying BatteryHub? Support it on Ko-fi"; Flags: shellexec postinstall unchecked skipifsilent nowait runasoriginaluser
-#if SeelenBuild
-Filename: "https://seelen.io/resources/review/FnhWFEKvR0WJ-RJW4_nmQQ"; Description: "Open Seelen UI plugin page"; Flags: shellexec postinstall skipifsilent nowait runasoriginaluser; Check: not IsUpdate
-#endif
 
 [UninstallRun]
 Filename: "{app}\BatteryHub.exe"; Parameters: "--quit"; Flags: runhidden waituntilterminated; RunOnceId: "QuitApp"
