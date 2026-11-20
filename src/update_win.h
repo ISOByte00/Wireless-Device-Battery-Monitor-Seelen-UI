@@ -15,6 +15,8 @@ bool AutomaticEnabled();
 bool Supported();
 void ToggleAutomatic();
 void Activate(HWND owner);
+// Seelen builds only: replace the registered installation with the latest stable upstream BatteryHub.
+void ReturnToOriginal(HWND owner);
 
 // Native helpers also used by the download worker and temporary installer helper.
 struct Installation {

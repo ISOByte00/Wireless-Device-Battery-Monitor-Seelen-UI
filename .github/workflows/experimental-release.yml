@@ -81,10 +81,11 @@ jobs:
 
           This is an ISOByte00 integration fork release, not an official BatteryHub release.
 
-          - Adds a Seelen-specific independent update channel.
-          - Enables manual and approximately daily automatic update checks.
-          - Requires a locally signed manifest before any installer can run.
-          - Preserves existing BatteryHub and Seelen integration settings during updates.
+          - Adds a safe return path to the original BatteryHub while preserving compatible user settings.
+          - Leaves the Seelen plugin file untouched when returning to the original version.
+          - Adds complete application support for 15 languages.
+          - Localizes Seelen plugin status messages in 15 languages and synchronizes them with the application language.
+          - Preserves the independently signed Seelen update system.
           - Preserves the original BatteryHub developer attribution, license and Ko-fi link.
           "@.Trim() | Set-Content release/RELEASE_NOTES.md -NoNewline
 
@@ -111,7 +112,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: BatteryHub Seelen Integration ${{ github.ref_name }}
           draft: true
-          prerelease: true
+          prerelease: false
           body_path: release/RELEASE_NOTES.md
           files: |
             release/*.exe
@@ -151,4 +152,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
-        run: gh release edit "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY --draft=false --prerelease
+        run: gh release edit "v$env:RELEASE_VERSION" --repo $env:GITHUB_REPOSITORY --draft=false --prerelease=false

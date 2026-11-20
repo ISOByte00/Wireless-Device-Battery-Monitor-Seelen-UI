@@ -88,10 +88,12 @@ bool InstalledVersion(const std::wstring& exe, const Version& expected) {
 }
 }
 
-bool StartApply(HWND owner, const std::wstring& installer, const ReleaseInfo& release, HANDLE* process) {
+bool StartApplyInternal(HWND owner, const std::wstring& installer, const ReleaseInfo& release,
+                        HANDLE* process, bool original) {
     auto target = ExecutablePath();
     auto installed = FindInstallation(target);
-    if (!installed.valid || !release.CanInstall() || !VerifyFile(installer, release.sha256, release.size)) {
+    if (!installed.valid || !(original ? release.CanVerifyIntegrity() : release.CanInstall()) ||
+        !VerifyFile(installer, release.sha256, release.size)) {
         MessageBoxW(owner, T(L"The update or installation could not be verified. Please use the official release page."),
             T(L"BatteryHub update"), MB_OK | MB_ICONINFORMATION);
         return false;
@@ -103,7 +105,8 @@ bool StartApply(HWND owner, const std::wstring& installer, const ReleaseInfo& re
         MessageBoxW(owner, T(L"Could not prepare the update helper. Your current version was kept."), T(L"BatteryHub update"), MB_OK | MB_ICONINFORMATION);
         return false;
     }
-    std::wstring arguments = L"--apply-update " + QuoteArgument(installer) + L" " + QuoteArgument(Wide(release.sha256)) + L" " +
+    std::wstring arguments = std::wstring(original ? L"--apply-original " : L"--apply-update ") +
+        QuoteArgument(installer) + L" " + QuoteArgument(Wide(release.sha256)) + L" " +
         QuoteArgument(std::to_wstring(release.size)) + L" " + QuoteArgument(target) + L" " + QuoteArgument(Wide(VersionText(release.version))) +
         L" " + std::to_wstring(GetCurrentProcessId());
     if (!Launch(helper, arguments, false, process)) {
@@ -114,8 +117,18 @@ bool StartApply(HWND owner, const std::wstring& installer, const ReleaseInfo& re
     return true;
 }
 
+bool StartApply(HWND owner, const std::wstring& installer, const ReleaseInfo& release, HANDLE* process) {
+    return StartApplyInternal(owner, installer, release, process, false);
+}
+
+bool StartOriginalApply(HWND owner, const std::wstring& installer, const ReleaseInfo& release, HANDLE* process) {
+    return StartApplyInternal(owner, installer, release, process, true);
+}
+
 int RunApplyMode(int argc, wchar_t** argv) {
-    if (argc < 2 || wcscmp(argv[1], L"--apply-update") != 0) return -1;
+    if (argc < 2) return -1;
+    bool original = wcscmp(argv[1], L"--apply-original") == 0;
+    if (!original && wcscmp(argv[1], L"--apply-update") != 0) return -1;
     if (argc != 8) return 2;
     i18n::Init();  // the helper runs before the normal startup, so its messages need the language too
     std::wstring installer = argv[2], target = argv[5], self = ExecutablePath();
@@ -155,7 +168,7 @@ int RunApplyMode(int argc, wchar_t** argv) {
     }
     std::wstring arguments = L"/SP- /SILENT /NORESTART /RESTARTEXITCODE=3010 /WBUPDATE=1 /DIR=" + QuoteArgument(installed.directory) +
         (installed.allUsers ? L" /ALLUSERS" : L" /CURRENTUSER");
-    if (appversion::seelen) {
+    if (appversion::seelen && !original) {
         wchar_t appData[32768];
         DWORD length = GetEnvironmentVariableW(L"APPDATA", appData, ARRAYSIZE(appData));
         if (!length || length >= ARRAYSIZE(appData)) {
@@ -194,6 +207,8 @@ int RunApplyMode(int argc, wchar_t** argv) {
         restarted = GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES &&
                     Launch(target, L"", false, nullptr);
         if (!restarted) Error(L"BatteryHub could not reopen. Please start it manually or repair the installation.");
+        else if (confirmed && original)
+            Error(L"Original BatteryHub has been installed successfully.\n\nThe Seelen plugin was left untouched. If you no longer need it, you can remove it manually from Seelen UI.");
         else if (confirmed && appversion::seelen)
             Error(L"BatteryHub Seelen was updated. If the toolbar does not reconnect, restart Seelen UI; do not reset its settings.");
     } else if (code == 0 && !parentExited) {

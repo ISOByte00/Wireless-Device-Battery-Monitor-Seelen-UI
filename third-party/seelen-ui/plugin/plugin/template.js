@@ -1,25 +1,53 @@
 const openMenu = 'open("batteryhub://show-menu")';
+const messages = {
+  en: { missing: "BatteryHub not found", waiting: "Waiting for data", empty: "No devices found", disconnected: "Disconnected", error: "Data error", syncing: "Waiting for synchronization", tray: "In tray mode", disabled: "Seelen integration is disabled" },
+  de: { missing: "BatteryHub nicht gefunden", waiting: "Daten werden erwartet", empty: "Keine Geräte gefunden", disconnected: "Verbindung getrennt", error: "Datenfehler", syncing: "Synchronisierung wird erwartet", tray: "Im Infobereich-Modus", disabled: "Seelen-Integration ist deaktiviert" },
+  es: { missing: "No se encontró BatteryHub", waiting: "Esperando datos", empty: "No se encontraron dispositivos", disconnected: "Desconectado", error: "Error de datos", syncing: "Esperando sincronización", tray: "En modo bandeja", disabled: "La integración con Seelen está desactivada" },
+  fr: { missing: "BatteryHub introuvable", waiting: "En attente des données", empty: "Aucun appareil trouvé", disconnected: "Déconnecté", error: "Erreur de données", syncing: "En attente de synchronisation", tray: "En mode zone de notification", disabled: "L’intégration Seelen est désactivée" },
+  pl: { missing: "Nie znaleziono BatteryHub", waiting: "Oczekiwanie na dane", empty: "Nie znaleziono urządzeń", disconnected: "Rozłączono", error: "Błąd danych", syncing: "Oczekiwanie na synchronizację", tray: "W trybie zasobnika", disabled: "Integracja z Seelen jest wyłączona" },
+  "pt-BR": { missing: "BatteryHub não encontrado", waiting: "Aguardando dados", empty: "Nenhum dispositivo encontrado", disconnected: "Desconectado", error: "Erro de dados", syncing: "Aguardando sincronização", tray: "No modo de bandeja", disabled: "A integração com o Seelen está desativada" },
+  tr: { missing: "BatteryHub bulunamadı", waiting: "Veri bekleniyor", empty: "Cihaz bulunamadı", disconnected: "Bağlantı kesildi", error: "Veri hatası", syncing: "Senkronizasyon bekleniyor", tray: "Tray modunda", disabled: "Seelen entegrasyonu kapalı" },
+  ru: { missing: "BatteryHub не найден", waiting: "Ожидание данных", empty: "Устройства не найдены", disconnected: "Соединение разорвано", error: "Ошибка данных", syncing: "Ожидание синхронизации", tray: "Режим области уведомлений", disabled: "Интеграция с Seelen отключена" },
+  uk: { missing: "BatteryHub не знайдено", waiting: "Очікування даних", empty: "Пристроїв не знайдено", disconnected: "З’єднання розірвано", error: "Помилка даних", syncing: "Очікування синхронізації", tray: "Режим області сповіщень", disabled: "Інтеграцію з Seelen вимкнено" },
+  he: { missing: "BatteryHub לא נמצא", waiting: "ממתין לנתונים", empty: "לא נמצאו התקנים", disconnected: "מנותק", error: "שגיאת נתונים", syncing: "ממתין לסנכרון", tray: "במצב מגש", disabled: "השילוב עם Seelen מושבת" },
+  ar: { missing: "لم يتم العثور على BatteryHub", waiting: "في انتظار البيانات", empty: "لم يتم العثور على أجهزة", disconnected: "غير متصل", error: "خطأ في البيانات", syncing: "في انتظار المزامنة", tray: "في وضع علبة النظام", disabled: "تكامل Seelen معطّل" },
+  ja: { missing: "BatteryHub が見つかりません", waiting: "データを待っています", empty: "デバイスが見つかりません", disconnected: "切断されました", error: "データエラー", syncing: "同期を待っています", tray: "トレイモードです", disabled: "Seelen 連携は無効です" },
+  "zh-CN": { missing: "未找到 BatteryHub", waiting: "正在等待数据", empty: "未找到设备", disconnected: "连接已断开", error: "数据错误", syncing: "正在等待同步", tray: "当前为托盘模式", disabled: "Seelen 集成已关闭" },
+  "zh-TW": { missing: "找不到 BatteryHub", waiting: "正在等待資料", empty: "找不到裝置", disconnected: "連線已中斷", error: "資料錯誤", syncing: "正在等待同步", tray: "目前為系統匣模式", disabled: "Seelen 整合已關閉" },
+  ko: { missing: "BatteryHub를 찾을 수 없음", waiting: "데이터 기다리는 중", empty: "장치를 찾을 수 없음", disconnected: "연결 끊김", error: "데이터 오류", syncing: "동기화 기다리는 중", tray: "트레이 모드", disabled: "Seelen 통합이 꺼져 있음" },
+};
+const languageCodes = Object.keys(messages);
+let activeLanguage = "en";
+const normalizeLanguage = (value) => {
+  if (typeof value !== "string") return "en";
+  const lower = value.trim().toLowerCase();
+  return languageCodes.find((code) => code.toLowerCase() === lower) || "en";
+};
+const message = (key) => (messages[activeLanguage] || messages.en)[key] || messages.en[key];
+const isRtl = () => activeLanguage === "ar" || activeLanguage === "he";
 const statusButton = (text) => Button({
   tooltip: "BatteryHub",
   content: text,
   onClick: openMenu,
-  style: { display: "flex", alignItems: "center", whiteSpace: "nowrap", opacity: 0.85 },
+  style: { display: "flex", alignItems: "center", whiteSpace: "nowrap", opacity: 0.85, direction: isRtl() ? "rtl" : "ltr", unicodeBidi: "plaintext" },
 });
 
 if (typeof batteryHub !== "string" || !batteryHub.trim()) {
-  return statusButton("BatteryHub bulunamadı");
+  return statusButton(message("missing"));
 }
 
 let data;
 try {
   data = JSON.parse(batteryHub);
 } catch {
-  return statusButton("Veri hatası");
+  return statusButton(message("error"));
 }
 
 if (!data || typeof data !== "object" || Array.isArray(data)) {
-  return statusButton("Veri hatası");
+  return statusButton(message("error"));
 }
+
+activeLanguage = normalizeLanguage(data.language);
 
 // Date is a reactive Seelen scope. It forces another evaluation after a failed
 // remoteData fetch leaves the last successful response cached by the toolbar.
@@ -29,27 +57,27 @@ const heartbeat = typeof data.heartbeat === "number" && Number.isFinite(data.hea
   ? data.heartbeat
   : null;
 if (heartbeat !== null && now - heartbeat > 90000) {
-  return statusButton("Bağlantı kesildi");
+  return statusButton(message("disconnected"));
 }
 
 if (data.status === "error") {
-  return statusButton("Veri hatası");
+  return statusButton(message("error"));
 }
 
 const settings = data.settings && typeof data.settings === "object" && !Array.isArray(data.settings)
   ? data.settings
   : {};
 if (settings.seelenIntegration === false) {
-  return statusButton("Seelen entegrasyonu kapalı");
+  return statusButton(message("disabled"));
 }
 if (settings.displayMode === "tray") {
-  return statusButton("Tray modunda");
+  return statusButton(message("tray"));
 }
 if (data.status === "pending") {
-  return statusButton("Veri bekleniyor");
+  return statusButton(message("waiting"));
 }
 if (data.status !== "ready" || !Array.isArray(data.devices)) {
-  return statusButton("Veri hatası");
+  return statusButton(message("error"));
 }
 
 const timestamp = typeof data.timestamp === "number" && Number.isFinite(data.timestamp)
@@ -59,7 +87,7 @@ const pollIntervalMs = typeof settings.pollIntervalMs === "number" && Number.isF
   ? Math.max(30000, settings.pollIntervalMs)
   : 60000;
 if (timestamp !== null && now - timestamp > pollIntervalMs + 60000) {
-  return statusButton("Senkronizasyon bekleniyor");
+  return statusButton(message("syncing"));
 }
 
 const iconForKind = {
@@ -104,7 +132,7 @@ const sanitizeDevice = (d) => {
 
 const validDevices = data.devices.map(sanitizeDevice).filter(Boolean);
 if (!validDevices.length) {
-  return statusButton("Cihaz bulunamadı");
+  return statusButton(message("empty"));
 }
 
 const monochrome = settings.monochrome === true;
@@ -132,7 +160,7 @@ return Group({
           icon(iconForKind[device.kind] || "LuBatteryMedium", 14),
           Group({
             content: detailFor(device),
-            style: { display: "flex", alignItems: "center", gap: "0.15rem", lineHeight: 1 },
+            style: { display: "flex", alignItems: "center", gap: "0.15rem", lineHeight: 1, direction: "ltr", unicodeBidi: "isolate" },
           }),
         ]
       : [icon(iconForKind[device.kind] || "LuBatteryMedium"), ...detailFor(device)],
@@ -148,6 +176,8 @@ return Group({
       whiteSpace: "nowrap",
       maxWidth: "140px",
       lineHeight: 1,
+      direction: "ltr",
+      unicodeBidi: "isolate",
     },
   })),
   style: {
@@ -155,5 +185,6 @@ return Group({
     alignItems: "center",
     gap: "0.5rem",
     padding: "0 var(--item-padding)",
+    direction: "ltr",
   },
 });

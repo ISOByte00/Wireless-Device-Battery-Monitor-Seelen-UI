@@ -211,6 +211,12 @@ std::vector<Language> Available() {
 
 std::wstring Choice() { return g_choice; }
 
+std::wstring ActiveCode() {
+    std::wstring code = g_choice.empty() ? AutoCode() : Lower(g_choice);
+    auto it = g_sources.find(code);
+    return it == g_sources.end() ? L"en" : it->second.code;
+}
+
 void SetChoice(const std::wstring& code) {
     g_choice = code;
     RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, L"Language", REG_SZ, code.c_str(), (DWORD)((code.size() + 1) * sizeof(wchar_t)));

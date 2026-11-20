@@ -54,7 +54,7 @@ enum MenuId : UINT {
     ID_REFRESH = 100, ID_AUTOSTART, ID_HIDE_LAST_KNOWN, ID_WIDGET_BACKGROUND, ID_EXIT, ID_MODE_WIDGET, ID_MODE_TRAY, ID_SUPPORT, ID_REPORT,
     ID_BRAND_COLORS, ID_STACKED, ID_SHOW_DISCONNECTED, ID_RECORD_HISTORY,
     ID_POLL_FIRST = 500,  // "Check battery every": ID_POLL_FIRST + 0..7
-    ID_UPDATE = 200, ID_AUTO_UPDATE, ID_SEELEN_INTEGRATION, ID_SEELEN_GUIDE, ID_SEELEN_MONOCHROME,
+    ID_UPDATE = 200, ID_AUTO_UPDATE, ID_SEELEN_INTEGRATION, ID_SEELEN_GUIDE, ID_SEELEN_MONOCHROME, ID_REMOVE_SEELEN,
     ID_LANG_AUTO = 400, ID_LANG_ADD, ID_LANG_FIRST,  // "Language": ID_LANG_FIRST + 0..63
     ID_MONITOR_ALL = 300, ID_MONITOR_MAIN, ID_MONITOR_FIRST,  // "Show the widget on": ID_MONITOR_FIRST + 0..31
     ID_DEVICE_FIRST = 1000
@@ -105,20 +105,14 @@ HRESULT CALLBACK SeelenGuideDialog(HWND dialog, UINT notification, WPARAM, LPARA
 }
 
 bool ShowSeelenGuide() {
-    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Open plugin page" }, { IDNO, L"Got it" }};
+    TASKDIALOG_BUTTON buttons[] = {{ IDYES, T(L"Open plugin page") }, { IDNO, T(L"Got it") }};
     TASKDIALOGCONFIG dialog{ sizeof(dialog) };
-    dialog.dwFlags = TDF_ENABLE_HYPERLINKS;
+    dialog.dwFlags = TDF_ENABLE_HYPERLINKS | (i18n::Rtl() ? TDF_RTL_LAYOUT : 0);
     dialog.pszWindowTitle = kAppName;
-    dialog.pszMainInstruction = L"Set up BatteryHub in Fancy Toolbar";
-    dialog.pszContent =
-        L"Step 1 - Install the plugin\n"
-        L"Open the BatteryHub plugin page in Seelen UI and install it. Installing the plugin alone does not add it to your toolbar.\n\n"
-        L"Step 2 - Add it to Fancy Toolbar\n"
-        L"Open Seelen UI Settings and select Fancy Toolbar. In the toolbar layout editor, find BatteryHub and add it to the section you want.\n\n"
-        L"Step 3 - Done\n"
-        L"Battery levels for devices detected by BatteryHub should now appear in the toolbar. The integration is already enabled; you can change it later from the BatteryHub menu.\n\n"
-        L"Detailed documentation:\n"
+    dialog.pszMainInstruction = T(L"Set up BatteryHub in Fancy Toolbar");
+    std::wstring content = std::wstring(T(L"Step 1 - Install the plugin\nOpen the BatteryHub plugin page in Seelen UI and install it. Installing the plugin alone does not add it to your toolbar.\n\nStep 2 - Add it to Fancy Toolbar\nOpen Seelen UI Settings and select Fancy Toolbar. In the toolbar layout editor, find BatteryHub and add it to the section you want.\n\nStep 3 - Done\nBattery levels for devices detected by BatteryHub should now appear in the toolbar. The integration is already enabled; you can change it later from the BatteryHub menu.\n\nDetailed documentation:\n")) +
         L"<a href=\"https://github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI\">github.com/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI</a>";
+    dialog.pszContent = content.c_str();
     dialog.pButtons = buttons;
     dialog.cButtons = ARRAYSIZE(buttons);
     dialog.nDefaultButton = IDNO;
@@ -128,6 +122,22 @@ bool ShowSeelenGuide() {
     if (SUCCEEDED(shown) && choice == IDYES)
         ShellExecuteW(nullptr, L"open", L"https://seelen.io/resources/review/FnhWFEKvR0WJ-RJW4_nmQQ", nullptr, nullptr, SW_SHOWNORMAL);
     return SUCCEEDED(shown);
+}
+
+void ConfirmReturnToOriginal() {
+    TASKDIALOG_BUTTON buttons[] = { { IDYES, T(L"Continue") }, { IDCANCEL, T(L"Cancel") } };
+    TASKDIALOGCONFIG dialog{ sizeof(dialog) };
+    dialog.hwndParent = g_hwnd;
+    dialog.dwFlags = i18n::Rtl() ? TDF_RTL_LAYOUT : 0;
+    dialog.pszWindowTitle = T(L"Return to Original BatteryHub");
+    dialog.pszMainInstruction = T(L"Return to Original BatteryHub");
+    dialog.pszContent = T(L"This will replace BatteryHub Seelen Integration with the original BatteryHub maintained by krisgfx9.\n\nYour compatible BatteryHub settings will be preserved.\n\nThe Seelen plugin will NOT be removed automatically. You can remove it manually from Seelen UI whenever you want.");
+    dialog.pButtons = buttons;
+    dialog.cButtons = ARRAYSIZE(buttons);
+    dialog.nDefaultButton = IDCANCEL;
+    int clicked = IDCANCEL;
+    if (SUCCEEDED(TaskDialogIndirect(&dialog, &clicked, nullptr, nullptr)) && clicked == IDYES)
+        updates::ReturnToOriginal(g_hwnd);
 }
 #endif
 std::atomic<DWORD> g_pollIntervalMs{ 60 * 1000 };  // set from the menu, read by the worker thread
@@ -357,16 +367,17 @@ void MaybeOfferSeelenIntegration(bool fromMenu = false) {
     if ((!fromMenu && g_seelenPrompted) || !IsSeelenRunning()) return;
     g_seelenPrompted = true;
     SaveBoolSetting(L"SeelenIntegrationPrompted", true);
-    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Seelen sürümünü indir" }, { IDNO, L"Şimdi değil" }};
+    TASKDIALOG_BUTTON buttons[] = {{ IDYES, T(L"Download the Seelen version") }, { IDNO, T(L"Not now") }};
     TASKDIALOGCONFIG dialog{ sizeof(dialog) };
     dialog.hwndParent = g_hwnd;
     dialog.pszWindowTitle = kAppName;
-    dialog.pszMainInstruction = L"Seelen UI algılandı";
-    dialog.pszContent = L"BatteryHub, Seelen UI Fancy Toolbar'da cihazlarının pil seviyelerini gösterebilir.\n\nBu özellik Seelen destekli BatteryHub sürümünü gerektirir.";
+    dialog.dwFlags = i18n::Rtl() ? TDF_RTL_LAYOUT : 0;
+    dialog.pszMainInstruction = T(L"Seelen UI detected");
+    dialog.pszContent = T(L"BatteryHub can show your devices' battery levels in Seelen UI Fancy Toolbar.\n\nThis feature requires the Seelen-enabled BatteryHub version.");
     dialog.pButtons = buttons;
     dialog.cButtons = ARRAYSIZE(buttons);
     dialog.nDefaultButton = IDNO;
-    dialog.pszFooter = L"Yalnızca GitHub Releases içindeki uygun Windows paketi kullanılmalıdır.";
+    dialog.pszFooter = T(L"Only the appropriate Windows package from GitHub Releases should be used.");
     int choice = IDNO;
     TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
     if (choice != IDYES) return;
@@ -826,6 +837,7 @@ void PublishSeelenState(const std::vector<TrayEntry*>& list) {
         });
     }
     seelen_bridge::Settings settings;
+    settings.language = i18n::ActiveCode();
     settings.widgetMode = g_wantWidget;
     settings.stacked = g_stacked;
     settings.monochrome = g_seelenMonochrome;
@@ -1171,12 +1183,12 @@ void ShowMenu() {
     CheckMenuRadioItem(m, ID_MODE_WIDGET, ID_MODE_TRAY, g_wantWidget ? ID_MODE_WIDGET : ID_MODE_TRAY, MF_BYCOMMAND);
 #if defined(SEELEN_INTEGRATION)
     AppendMenuW(m, MF_STRING | (g_seelenIntegration ? MF_CHECKED : 0), ID_SEELEN_INTEGRATION,
-                L"Show BatteryHub in Seelen toolbar");
+                T(L"Show BatteryHub in Seelen toolbar"));
     AppendMenuW(m, MF_STRING | (g_seelenMonochrome ? MF_CHECKED : 0), ID_SEELEN_MONOCHROME,
-                L"Use white icons in Seelen toolbar");
-    AppendMenuW(m, MF_STRING, ID_SEELEN_GUIDE, L"Seelen UI setup guide...");
+                T(L"Use white icons in Seelen toolbar"));
+    AppendMenuW(m, MF_STRING, ID_SEELEN_GUIDE, T(L"Seelen UI setup guide..."));
 #else
-    AppendMenuW(m, MF_STRING, ID_SEELEN_INTEGRATION, L"Seelen UI integration...");
+    AppendMenuW(m, MF_STRING, ID_SEELEN_INTEGRATION, T(L"Seelen UI integration..."));
 #endif
     UINT bgFlags = MF_STRING | (g_widgetBackground ? MF_CHECKED : 0) | (g_wantWidget ? 0 : MF_GRAYED);
     AppendMenuW(m, bgFlags, ID_WIDGET_BACKGROUND, T(L"Background behind taskbar text (for transparent taskbars)"));
@@ -1249,6 +1261,10 @@ void ShowMenu() {
     UINT updateFlags = MF_STRING | (updates::AutomaticEnabled() ? MF_CHECKED : 0) |
                        (updates::Supported() ? 0 : MF_GRAYED);
     AppendMenuW(m, updateFlags, ID_AUTO_UPDATE, T(L"Automatically check for updates"));
+#if defined(SEELEN_INTEGRATION)
+    AppendMenuW(m, MF_STRING | (updates::Busy() ? MF_GRAYED : 0), ID_REMOVE_SEELEN,
+                T(L"Remove Seelen Integration..."));
+#endif
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_EXIT, T(L"Exit"));
     POINT pt;
@@ -1300,6 +1316,11 @@ void ShowMenu() {
         case ID_REPORT: report::Show(g_inst, g_hwnd); break;
         case ID_UPDATE: updates::Activate(g_hwnd); break;
         case ID_AUTO_UPDATE: updates::ToggleAutomatic(); break;
+        case ID_REMOVE_SEELEN:
+#if defined(SEELEN_INTEGRATION)
+            ConfirmReturnToOriginal();
+#endif
+            break;
         case ID_EXIT: DestroyWindow(g_hwnd); break;
         default:
             if (cmd >= ID_POLL_FIRST && cmd < ID_POLL_FIRST + ARRAYSIZE(POLL_SECONDS)) {

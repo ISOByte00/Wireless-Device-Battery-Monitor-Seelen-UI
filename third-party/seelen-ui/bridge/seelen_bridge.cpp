@@ -45,6 +45,8 @@ std::string MakeJson(const std::vector<Device>& devices, const Settings& setting
                      bool isInitialScanDone) {
     std::string out = "{\"status\":\"";
     out += (isInitialScanDone ? "ready" : "pending");
+    out += "\",\"language\":\"";
+    out += JsonEscape(WideToUtf8(settings.language));
     out += "\",\"timestamp\":";
     out += std::to_string(settings.lastScanTimestamp);
     out += ",\"settings\":{\"displayMode\":\"";

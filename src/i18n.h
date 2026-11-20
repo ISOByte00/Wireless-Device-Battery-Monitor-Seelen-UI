@@ -34,6 +34,9 @@ void Init();
 std::vector<Language> Available();
 // The saved choice: empty = follow the Windows display language.
 std::wstring Choice();
+// The language currently in use. Automatic mode resolves the Windows language;
+// unsupported languages and English return "en".
+std::wstring ActiveCode();
 // Saves the choice ("" = automatic) and switches to it.
 void SetChoice(const std::wstring& code);
 // True for right-to-left languages (Hebrew, Arabic): menus are laid out from the right.

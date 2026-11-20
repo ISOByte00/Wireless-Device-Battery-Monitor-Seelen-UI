@@ -23,6 +23,7 @@ struct Device {
 };
 
 struct Settings {
+    std::wstring language = L"en";
     bool widgetMode = true;
     bool stacked = false;
     bool monochrome = false;

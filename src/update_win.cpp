@@ -111,7 +111,7 @@ std::uint64_t Decimal(const std::wstring& text) {
 
 // Synchronous handles belong exclusively to this worker. Cancellation is
 // cooperative between finite-timeout calls; closing them concurrently is unsafe.
-Result FetchRelease() {
+Result FetchRelease(bool original = false) {
     Result out;
     ULONGLONG deadline = GetTickCount64() + 30000;
     HINTERNET session = WinHttpOpen(L"BatteryHub/" WB_VERSION_WSTRING, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
@@ -124,6 +124,7 @@ Result FetchRelease() {
     }
     HINTERNET connection = WinHttpConnect(session, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
     HINTERNET req = connection ? WinHttpOpenRequest(connection, L"GET",
+        original ? L"/repos/krisgfx9/Wireless-Device-Battery-Monitor/releases/latest" :
         appversion::seelen ? L"/repos/ISOByte00/Wireless-Device-Battery-Monitor-Seelen-UI/releases" :
                             L"/repos/krisgfx9/Wireless-Device-Battery-Monitor/releases/latest", nullptr,
         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
@@ -154,8 +155,9 @@ Result FetchRelease() {
                 if (body.size() > 1024 * 1024) break;
             }
             Version current;
-            ParseVersion(appversion::text, current);
-            ReleaseResult parsed = appversion::seelen ? ParseSeelenReleases(body, current, out.release) :
+            if (!original) ParseVersion(appversion::text, current);
+            ReleaseResult parsed = original ? ParseRelease(body, current, out.release) :
+                appversion::seelen ? ParseSeelenReleases(body, current, out.release) :
                                                         ParseRelease(body, current, out.release);
             if (complete && parsed != ReleaseResult::Invalid) out.success = true;
             else out.error = L"GitHub returned invalid update information. Please try again later.";
@@ -479,6 +481,50 @@ Result DownloadRelease() {
     return out;
 }
 
+Result DownloadOriginalRelease() {
+    Result out = FetchRelease(true); // Always re-read the real upstream stable release before execution.
+    if (!out.success) return out;
+    out.success = false;
+    if (out.release.tag.empty() || !out.release.CanVerifyIntegrity()) {
+        out.error = L"The latest stable original BatteryHub release has no verifiable Windows installer. Your current version was kept.";
+        return out;
+    }
+    ULONGLONG deadline = GetTickCount64() + 600000;
+    std::string sums, listedHash;
+    std::string setupName = "BatteryHub-Setup-" + VersionText(out.release.version) + ".exe";
+    if (!GetText(out.release.sumsUrl, out.release.sumsSize, deadline, sums)) {
+        out.error = cancelled ? L"Download cancelled." : L"Could not download the original BatteryHub checksum file. Your current version was kept.";
+        return out;
+    }
+    if (!SignedHash(sums, setupName, listedHash) || listedHash != out.release.sha256) {
+        out.error = L"The GitHub asset digest and SHA-256 checksum do not match. The original installer was not downloaded.";
+        return out;
+    }
+    std::wstring directory = NewDownloadDirectory();
+    if (directory.empty()) { out.error = L"Could not create a temporary download folder."; return out; }
+    std::wstring partial = directory + L"\\update-setup.part";
+    std::wstring final = directory + L"\\update-setup.exe";
+    HANDLE file = CreateFileW(partial.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    bool complete = file != INVALID_HANDLE_VALUE &&
+        HttpGet(Widen(out.release.download), out.release.size, deadline, true, [&](const char* data, DWORD n) {
+            DWORD written = 0;
+            return WriteFile(file, data, n, &written, nullptr) && written == n;
+        });
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+    if (complete && !cancelled && VerifyFile(partial, out.release.sha256, out.release.size) &&
+        MoveFileW(partial.c_str(), final.c_str())) {
+        out.success = true;
+        out.error.clear();
+        out.file = final;
+    } else {
+        DeleteFileW(partial.c_str());
+        RemoveDirectoryW(directory.c_str());
+        out.error = cancelled ? L"Download cancelled." :
+            L"The original BatteryHub installer could not be downloaded or its SHA-256 checksum could not be verified. Your current version was kept.";
+    }
+    return out;
+}
+
 struct DownloadDialogState { bool automaticClose = false; };
 
 HRESULT CALLBACK DownloadDialog(HWND dialog, UINT notification, WPARAM button, LPARAM, LONG_PTR context) {
@@ -562,7 +608,8 @@ void ShowAvailable(HWND owner) {
     config.hwndParent = DialogOwner(owner);
     config.pszWindowTitle = T(L"BatteryHub update");
     std::wstring instruction = appversion::seelen ?
-        (L"BatteryHub Seelen " + Widen(known.tag) + L" is available") : T(L"A new version is available");
+        TF(L"BatteryHub Seelen {version} is available", { { L"version", Widen(known.tag) } }) :
+        T(L"A new version is available");
     config.pszMainInstruction = instruction.c_str();
     config.pszContent = content.c_str();
     config.pButtons = installed.valid ? buttons : buttons + 1;
@@ -577,6 +624,69 @@ void ShowAvailable(HWND owner) {
         if (clicked == 100) DownloadAndInstall(owner);
     }
 }
+}
+
+void ReturnToOriginal(HWND owner) {
+    if (!appversion::seelen || Busy() || shuttingDown) return;
+    Installation installed = FindInstallation(ExecutablePath());
+    if (!installed.valid) {
+        ShowMessage(owner, L"This is a portable or unregistered copy. Install the original BatteryHub manually from its official release page.");
+        return;
+    }
+    operation = Operation::Downloading;
+    cancelled = false;
+    done = false;
+    progress = 0;
+    started = GetTickCount64();
+    worker = std::thread([] {
+        Result downloaded = DownloadOriginalRelease();
+        { std::lock_guard<std::mutex> lock(resultMutex); result = std::move(downloaded); }
+        done = true;
+    });
+    DownloadDialogState state;
+    TASKDIALOGCONFIG config{ sizeof(config) };
+    config.hwndParent = DialogOwner(owner);
+    config.dwFlags = TDF_SHOW_PROGRESS_BAR | TDF_CALLBACK_TIMER;
+    config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    config.pszWindowTitle = T(L"Return to Original BatteryHub");
+    config.pszMainInstruction = T(L"Downloading and verifying the original BatteryHub installer");
+    config.pszContent = T(L"The installer is checked against both GitHub's asset digest and the release's SHA256SUMS.txt file.");
+    config.pfCallback = DownloadDialog;
+    config.lpCallbackData = reinterpret_cast<LONG_PTR>(&state);
+    HRESULT dialogResult = TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
+    if (FAILED(dialogResult)) Cancel();
+    if (worker.joinable()) worker.join();
+    done = false;
+    Result downloaded;
+    { std::lock_guard<std::mutex> lock(resultMutex); downloaded = std::move(result); }
+    operation = Operation::Idle;
+    if (!downloaded.success || cancelled || shuttingDown) {
+        if (!cancelled && !shuttingDown) ShowMessage(owner, downloaded.error.c_str());
+        if (!downloaded.file.empty()) DeleteFileW(downloaded.file.c_str());
+        return;
+    }
+
+    TASKDIALOG_BUTTON buttons[] = { { IDYES, T(L"Continue") }, { IDCANCEL, T(L"Cancel") } };
+    TASKDIALOGCONFIG confirm{ sizeof(confirm) };
+    confirm.hwndParent = DialogOwner(owner);
+    confirm.pszWindowTitle = T(L"Return to Original BatteryHub");
+    confirm.pszMainInstruction = T(L"The installer's SHA-256 integrity has been verified");
+    confirm.pszContent = T(L"No independent publisher digital signature is available for this upstream release. SHA-256 verification is not the same as publisher identity verification.\n\nContinue with installation? BatteryHub will close, and the Seelen plugin will be left untouched.");
+    confirm.pButtons = buttons;
+    confirm.cButtons = ARRAYSIZE(buttons);
+    confirm.nDefaultButton = IDCANCEL;
+    int clicked = IDCANCEL;
+    dialogOpen = true;
+    HRESULT confirmed = TaskDialogIndirect(&confirm, &clicked, nullptr, nullptr);
+    dialogOpen = false;
+    if (FAILED(confirmed) || clicked != IDYES || shuttingDown) {
+        DeleteFileW(downloaded.file.c_str());
+        return;
+    }
+    if (!StartOriginalApply(owner, downloaded.file, downloaded.release, &applyProcess))
+        DeleteFileW(downloaded.file.c_str());
+    else
+        operation = Operation::Installing;
 }
 
 Installation FindInstallation(const std::wstring& executable) {

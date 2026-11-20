@@ -21,9 +21,12 @@ struct ReleaseInfo {
     // SHA256SUMS.txt and its maintainer signature (see update_signature.h); both are required.
     std::string sumsUrl, signatureUrl;
     std::uint64_t sumsSize = 0, signatureSize = 0;
-    bool CanInstall() const {
+    bool CanVerifyIntegrity() const {
         return !download.empty() && sha256.size() == 64 && size > 0 && size <= MaxDownloadBytes &&
-               !sumsUrl.empty() && sumsSize > 0 && sumsSize <= 64 * 1024 &&
+               !sumsUrl.empty() && sumsSize > 0 && sumsSize <= 64 * 1024;
+    }
+    bool CanInstall() const {
+        return CanVerifyIntegrity() &&
                !signatureUrl.empty() && signatureSize > 0 && signatureSize <= 1024;
     }
 };
