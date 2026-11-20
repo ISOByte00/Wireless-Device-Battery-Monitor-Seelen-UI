@@ -551,7 +551,7 @@ Result DownloadExperimentalSeelenRelease() {
         DeleteFileW(partial.c_str());
         RemoveDirectoryW(directory.c_str());
         out.error = cancelled ? L"Download cancelled." :
-            L"The experimental installer could not be downloaded or verified. Nothing was installed.";
+            L"The Seelen installer could not be downloaded or verified. Nothing was installed.";
     }
     return out;
 }
@@ -676,9 +676,9 @@ void DownloadSeelenInstaller(HWND owner) {
     progressDialog.hwndParent = DialogOwner(owner);
     progressDialog.dwFlags = TDF_SHOW_PROGRESS_BAR | TDF_CALLBACK_TIMER;
     progressDialog.dwCommonButtons = TDCBF_CANCEL_BUTTON;
-    progressDialog.pszWindowTitle = L"BatteryHub Seelen integration";
-    progressDialog.pszMainInstruction = L"Downloading and verifying the Seelen version";
-    progressDialog.pszContent = L"The installer is downloaded only from the ISOByte00 GitHub release.";
+    progressDialog.pszWindowTitle = T(L"BatteryHub Seelen integration");
+    progressDialog.pszMainInstruction = T(L"Downloading and verifying the Seelen version");
+    progressDialog.pszContent = T(L"The installer is downloaded only from the ISOByte00 GitHub release.");
     progressDialog.pfCallback = DownloadDialog;
     progressDialog.lpCallbackData = reinterpret_cast<LONG_PTR>(&state);
     if (FAILED(TaskDialogIndirect(&progressDialog, nullptr, nullptr, nullptr))) Cancel();
@@ -692,13 +692,13 @@ void DownloadSeelenInstaller(HWND owner) {
         if (!downloaded.file.empty()) DeleteExperimentalDownload(downloaded.file);
         return;
     }
-    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Run installer" }, { IDNO, L"Cancel and delete" }};
+    TASKDIALOG_BUTTON buttons[] = {{ IDYES, T(L"Run installer") }, { IDNO, T(L"Cancel and delete") }};
     TASKDIALOGCONFIG confirm{ sizeof(confirm) };
     confirm.hwndParent = DialogOwner(owner);
     std::wstring versionTitle = L"BatteryHub Seelen v" + Widen(VersionText(downloaded.release.version));
-    std::wstring mainInstruction = versionTitle + L" is verified";
-    std::wstring confirmText = L"Run " + Widen(downloaded.release.assetName) +
-        L" now?\n\nThis unofficial integration fork passed both the GitHub asset digest and SHA256SUMS.txt verification.";
+    std::wstring mainInstruction = TF(L"{version} is verified", { { L"version", versionTitle } });
+    std::wstring confirmText = TF(L"Run {installer} now?\n\nThis unofficial integration fork passed both the GitHub asset digest and SHA256SUMS.txt verification.",
+                                  { { L"installer", Widen(downloaded.release.assetName) } });
     confirm.pszWindowTitle = versionTitle.c_str();
     confirm.pszMainInstruction = mainInstruction.c_str();
     confirm.pszContent = confirmText.c_str();

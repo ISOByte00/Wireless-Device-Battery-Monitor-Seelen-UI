@@ -247,25 +247,26 @@ void OfferSeelenIntegration(bool fromMenu = false) {
     bool seelenRunning = IsSeelenRunning();
     if (!fromMenu && (g_seelenPrompted || !seelenRunning)) return;
 
-    TASKDIALOG_BUTTON buttons[] = {{ IDYES, L"Install Seelen version" }, { IDNO, L"Not now" }};
+    TASKDIALOG_BUTTON buttons[] = {{ IDYES, T(L"Download the Seelen version") }, { IDNO, T(L"Not now") }};
     TASKDIALOGCONFIG dialog{ sizeof(dialog) };
     // g_hwnd is deliberately hidden; an invisible owner can leave TaskDialog behind
     // the foreground window.  Use no owner so the prompt is always foreground-visible.
     dialog.hwndParent = nullptr;
+    dialog.dwFlags = i18n::Rtl() ? TDF_RTL_LAYOUT : 0;
     dialog.pszWindowTitle = kAppName;
-    dialog.pszMainInstruction = seelenRunning ? L"Seelen UI detected" : L"Seelen UI was not detected";
+    dialog.pszMainInstruction = seelenRunning ? T(L"Seelen UI detected") : T(L"Seelen UI was not detected");
     dialog.pszContent = seelenRunning
-        ? L"You're using Seelen UI. The standard BatteryHub taskbar indicator may not be visible.\n\nInstall the Seelen-compatible version to display device battery levels in the Fancy Toolbar."
-        : L"Seelen UI does not appear to be running, but you can still download the optional Seelen integration build.";
+        ? T(L"You're using Seelen UI. The standard BatteryHub taskbar indicator may not be visible.\n\nInstall the Seelen-compatible version to display device battery levels in the Fancy Toolbar.")
+        : T(L"Seelen UI does not appear to be running, but you can still download the optional Seelen integration build.");
     dialog.pButtons = buttons;
     dialog.cButtons = ARRAYSIZE(buttons);
     dialog.nDefaultButton = IDNO;
-    dialog.pszFooter = L"Unofficial integration fork. The installer is verified before you are asked to run it.";
+    dialog.pszFooter = T(L"Unofficial integration fork. The installer is verified before you are asked to run it.");
     dialog.pfCallback = ForegroundDialog;
     int choice = IDNO;
     HRESULT shown = TaskDialogIndirect(&dialog, &choice, nullptr, nullptr);
     if (FAILED(shown)) {
-        MessageBoxW(nullptr, L"Could not show the Seelen UI integration dialog. Please try the menu again.", kAppName,
+        MessageBoxW(nullptr, T(L"Could not show the Seelen UI integration dialog. Please try the menu again."), kAppName,
                     MB_OK | MB_ICONERROR);
         return;
     }
@@ -983,7 +984,7 @@ void ShowMenu() {
     AppendMenuW(m, MF_STRING | (updates::Busy() ? MF_GRAYED : 0), ID_UPDATE, updates::MenuLabel().c_str());
     {
         HMENU sub = CreatePopupMenu();
-        AppendMenuW(sub, MF_STRING, ID_SEELEN_INTEGRATION, L"Seelen UI integration...");
+        AppendMenuW(sub, MF_STRING, ID_SEELEN_INTEGRATION, T(L"Seelen UI integration..."));
         AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, T(L"3rd Party"));
     }
     UINT updateFlags = MF_STRING | (updates::AutomaticEnabled() ? MF_CHECKED : 0) |
