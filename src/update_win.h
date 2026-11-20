@@ -15,7 +15,7 @@ bool AutomaticEnabled();
 bool Supported();
 void ToggleAutomatic();
 void Activate(HWND owner);
-// Explicit, user-initiated download of the fixed ISOByte00 experimental build.
+// Explicit, user-initiated download of the latest ISOByte00 Seelen build.
 // This is not part of regular automatic update checking.
 void DownloadSeelenInstaller(HWND owner);
 

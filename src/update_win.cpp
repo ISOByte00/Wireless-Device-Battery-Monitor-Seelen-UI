@@ -199,9 +199,9 @@ Result FetchExperimentalSeelenRelease() {
             if (complete && ParseExperimentalSeelenRelease(body, out.release)) {
                 out.success = true;
                 out.metadataValid = true;
-            } else out.error = L"The experimental release or its required assets could not be verified.";
-        } else if (status == 404) out.error = L"The requested experimental release was not found.";
-        else out.error = L"GitHub could not provide the experimental release. Please try again later.";
+            } else out.error = L"The Seelen release or its required assets could not be verified.";
+        } else if (status == 404) out.error = L"The requested Seelen release was not found.";
+        else out.error = L"GitHub could not provide the Seelen release. Please try again later.";
     }
     if (!out.success && out.error.empty()) out.error = cancelled ? L"Download cancelled." :
         L"Could not contact GitHub. Check your Internet connection and try again.";
@@ -528,7 +528,7 @@ Result DownloadExperimentalSeelenRelease() {
     if (!GetText(out.release.sumsUrl, out.release.sumsSize, deadline, sums) ||
         !ChecksumHash(sums, out.release.assetName, checksum) || checksum != out.release.sha256) {
         out.error = cancelled ? L"Download cancelled." :
-            L"The experimental release checksum could not be verified. Nothing was installed.";
+            L"The Seelen release checksum could not be verified. Nothing was installed.";
         return out;
     }
     std::wstring directory = NewDownloadDirectory();
@@ -698,7 +698,7 @@ void DownloadSeelenInstaller(HWND owner) {
     std::wstring versionTitle = L"BatteryHub Seelen v" + Widen(VersionText(downloaded.release.version));
     std::wstring mainInstruction = versionTitle + L" is verified";
     std::wstring confirmText = L"Run " + Widen(downloaded.release.assetName) +
-        L" now?\n\nThis experimental, unofficial build passed both the GitHub asset digest and SHA256SUMS.txt verification.";
+        L" now?\n\nThis unofficial integration fork passed both the GitHub asset digest and SHA256SUMS.txt verification.";
     confirm.pszWindowTitle = versionTitle.c_str();
     confirm.pszMainInstruction = mainInstruction.c_str();
     confirm.pszContent = confirmText.c_str();
