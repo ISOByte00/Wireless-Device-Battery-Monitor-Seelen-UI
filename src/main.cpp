@@ -1,6 +1,7 @@
 // BatteryHub - tray app showing the battery level of wireless mice, headsets and Bluetooth devices.
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <commctrl.h>
 #include <dbt.h>
 #include <initguid.h>
