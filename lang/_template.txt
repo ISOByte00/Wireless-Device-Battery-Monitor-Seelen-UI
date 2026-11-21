@@ -72,6 +72,7 @@ Clear battery history for this device? =
 Could not save history changes. =
 Hide last known / asleep devices = 
 Show disconnected devices =
+Dim sleeping devices =
 Record battery history =
 Show on the taskbar (icon + percentage) = 
 Show as tray icons = 
@@ -212,7 +213,7 @@ Windows needs to restart before this update is complete. Your computer will not 
 BatteryHub could not reopen. Please start it manually or repair the installation. = 
 BatteryHub is up to date. = 
 BatteryHub update = 
-BatteryHub will close briefly while the update is installed. = 
+BatteryHub will close briefly while the update is installed. =
 
 # Seelen integration and return to upstream BatteryHub
 Seelen UI integration... =
