@@ -6,17 +6,22 @@
 #include <dbt.h>
 #include <initguid.h>
 #include <hidclass.h>
+#include <bthdef.h>
+#include <bluetoothapis.h>
 #include <tlhelp32.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "device_aliases.h"
@@ -26,8 +31,11 @@
 #include "i18n.h"
 #include "json_output.h"
 #include "labels.h"
+#include "refresh_policy.h"
+#include "memory_trim.h"
 #include "report.h"
 #include "rename_dialog.h"
+#include "offset_dialog.h"
 #if defined(SEELEN_INTEGRATION)
 #include "seelen_bridge.h"
 #endif
@@ -43,6 +51,10 @@ constexpr UINT WM_WIDGET_CLICK = WM_APP + 3;
 constexpr UINT_PTR TIMER_DEBOUNCE = 1;
 constexpr UINT_PTR TIMER_WIDGET = 2;
 constexpr UINT_PTR TIMER_ALERT_ICON = 3;
+constexpr UINT_PTR TIMER_RESUME = 4;
+constexpr GUID kConsoleDisplayStateGuid = {
+    0x6fe69556, 0x704a, 0x47a0, { 0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47 }
+};
 // "Check battery every" choices in seconds; 60 is the default. A poll resets an awake device's sleep timer,
 // so a device only sleeps if its timer is shorter than the interval.
 constexpr DWORD POLL_SECONDS[] = { 30, 60, 120, 300, 600, 900, 1800, 3600 };
@@ -53,7 +65,11 @@ constexpr UINT ALERT_ICON_ID = 2;
 enum MenuId : UINT {
     ID_REFRESH = 100, ID_AUTOSTART, ID_HIDE_LAST_KNOWN, ID_WIDGET_BACKGROUND, ID_EXIT, ID_MODE_WIDGET, ID_MODE_TRAY, ID_SUPPORT, ID_REPORT,
     ID_BRAND_COLORS, ID_STACKED, ID_SHOW_DISCONNECTED, ID_RECORD_HISTORY, ID_DIM_SLEEPING,
+    ID_TRAY_WHEN_EMPTY, ID_MAKE_ROOM, ID_FAR_LEFT,
+    ID_PLACE_AUTO, ID_PLACE_TOP, ID_PLACE_TRAY, ID_PLACE_BOTTOM,  // "Position on a vertical taskbar"
+    ID_POSITION_FIRST = 700,  // "Position on the taskbar": ID_POSITION_FIRST + 0..5, then the custom value
     ID_POLL_FIRST = 500,  // "Check battery every": ID_POLL_FIRST + 0..7
+    ID_LIMIT_OFF = 600, ID_LIMIT_FIRST,  // "Notify when charged to": off, then alerts::kChargeLimits
     ID_UPDATE = 200, ID_AUTO_UPDATE, ID_SEELEN_INTEGRATION, ID_SEELEN_GUIDE, ID_SEELEN_MONOCHROME, ID_REMOVE_SEELEN,
     ID_LANG_AUTO = 400, ID_LANG_ADD, ID_LANG_FIRST,  // "Language": ID_LANG_FIRST + 0..63
     ID_MONITOR_ALL = 300, ID_MONITOR_MAIN, ID_MONITOR_FIRST,  // "Show the widget on": ID_MONITOR_FIRST + 0..31
@@ -78,12 +94,21 @@ bool g_lightTaskbar;
 bool g_wantWidget = true;      // user's choice: taskbar widget (default) or tray icons
 bool g_useWidget = false;      // what is actually shown right now
 bool g_hideLastKnown = false;  // hide (last known) / asleep devices from taskbar and tray
+bool g_trayWhenEmpty = false;  // taskbar mode: swap the strip for the tray placeholder while no device is shown
+bool g_emptyToTray = false;    // that swap is in effect right now
 bool g_showDisconnectedDevices = false;  // opt-in, explicit driver-reported offline devices only
 bool g_dimSleeping = true;  // dim a sleeping device's last known value (menu option, on by default)
 bool g_recordHistory = true;  // save readings for "Battery history..." (menu option, on by default)
+int g_chargeLimit = 0;        // "Notify when charged to" 80/85/90%, 0 = off (the default)
 std::wstring g_widgetMonitor = L"all";  // which taskbars show the widget: "all", "main" or one monitor id
 bool g_widgetBackground = false;  // draw a plate behind the taskbar text (transparent taskbar themes)
 bool g_stacked = false;      // icon above the percentage (menu option)
+bool g_makeRoom = true;      // step past other apps' taskbar widgets (menu option)
+// "Position on the taskbar": distance from the notification area in DPI-independent pixels. Stored as
+// the TaskbarOffset value the widget has always read, so a value set by hand keeps working.
+const int POSITION_OFFSETS[] = { 0, 40, 80, 120, 160, 200 };
+widget::VerticalPlace g_verticalPlace = widget::VerticalPlace::Auto;  // column position on a left / right taskbar
+bool g_farLeft = false;      // widget at the left end of the taskbar instead of next to the clock (menu option)
 bool g_brandColors = false;  // off by default; known brands get their color (Razer green, Logitech blue, ...)
 bool g_seelenPrompted = false;
 bool g_seelenGuideShown = false;
@@ -153,6 +178,7 @@ struct TrayEntry {
     ULONGLONG lastSeen = 0;
     bool added = false;
     bool lowWarned = false;
+    bool limitWarned = false;  // "unplug at 80%" already shown during this charge
     std::wstring iconSig;    // what the current icon shows, to avoid needless redraws
     HICON icon = nullptr;
 };
@@ -212,6 +238,83 @@ void ApplyMenuTheme(bool light) {
     if (setMode) setMode(light ? 3 : 2);
     if (flush) flush();
 }
+
+// Small Windows 11 icons (Segoe Fluent Icons, Segoe MDL2 Assets on Windows 10) in the menu's icon column,
+// drawn in the menu's text colour for the light or dark theme. The menu stays the native Windows menu;
+// check marks and radio marks keep their own column. The bitmaps live until the object goes away.
+class MenuIcons {
+  public:
+    explicit MenuIcons(bool light) : light_(light) {
+        UINT dpi = GetDpiForWindow(g_hwnd);
+        size_ = MulDiv(16, dpi ? (int)dpi : 96, 96);
+        for (const wchar_t* face : { L"Segoe Fluent Icons", L"Segoe MDL2 Assets" }) {
+            HFONT f = CreateFontW(-size_, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                  ANTIALIASED_QUALITY, DEFAULT_PITCH, face);
+            HDC dc = CreateCompatibleDC(nullptr);
+            HGDIOBJ old = SelectObject(dc, f);
+            wchar_t got[LF_FACESIZE] = {};
+            GetTextFaceW(dc, LF_FACESIZE, got);
+            SelectObject(dc, old);
+            DeleteDC(dc);
+            if (!_wcsicmp(got, face)) { font_ = f; break; }
+            DeleteObject(f);
+        }
+    }
+    ~MenuIcons() {
+        for (HBITMAP b : bitmaps_) DeleteObject(b);
+        if (font_) DeleteObject(font_);
+    }
+    MenuIcons(const MenuIcons&) = delete;
+    MenuIcons& operator=(const MenuIcons&) = delete;
+
+    // `item` is a command id, or a position when `byPosition` (submenus have no command id).
+    void Set(HMENU menu, UINT item, bool byPosition, wchar_t glyph) {
+        HBITMAP b = Make(glyph);
+        if (!b) return;
+        MENUITEMINFOW mii{ sizeof(mii) };
+        mii.fMask = MIIM_BITMAP;
+        mii.hbmpItem = b;
+        SetMenuItemInfoW(menu, item, byPosition ? TRUE : FALSE, &mii);
+    }
+    void SetLast(HMENU menu, wchar_t glyph) { Set(menu, (UINT)GetMenuItemCount(menu) - 1, true, glyph); }
+
+  private:
+    HBITMAP Make(wchar_t glyph) {
+        if (!font_) return nullptr;
+        BITMAPINFO bi{};
+        bi.bmiHeader = { sizeof(BITMAPINFOHEADER), size_, -size_, 1, 32, BI_RGB };
+        void* bits = nullptr;
+        HDC dc = CreateCompatibleDC(nullptr);
+        HBITMAP bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (!bmp) { DeleteDC(dc); return nullptr; }
+        HGDIOBJ ob = SelectObject(dc, bmp);
+        HGDIOBJ of = SelectObject(dc, font_);
+        memset(bits, 0, (size_t)size_ * size_ * 4);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(255, 255, 255));
+        RECT r{ 0, 0, size_, size_ };
+        wchar_t s[2] = { glyph, 0 };
+        DrawTextW(dc, s, 1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        GdiFlush();
+        // white-on-black coverage -> premultiplied alpha in the menu text colour
+        const int c = light_ ? 0x1B : 0xF2;
+        auto* p = static_cast<DWORD*>(bits);
+        for (int i = 0; i < size_ * size_; i++) {
+            int a = ((p[i] & 0xFF) + ((p[i] >> 8) & 0xFF) + ((p[i] >> 16) & 0xFF)) / 3;
+            int v = c * a / 255;
+            p[i] = ((DWORD)a << 24) | ((DWORD)v << 16) | ((DWORD)v << 8) | (DWORD)v;
+        }
+        SelectObject(dc, of);
+        SelectObject(dc, ob);
+        DeleteDC(dc);
+        bitmaps_.push_back(bmp);
+        return bmp;
+    }
+    bool light_;
+    int size_ = 16;
+    HFONT font_ = nullptr;
+    std::vector<HBITMAP> bitmaps_;
+};
 
 std::wstring ExePath() {
     std::wstring path(32768, L'\0');
@@ -501,11 +604,26 @@ bool LoadWidgetMode() { return LoadBoolSetting(L"TaskbarWidget", true); }
 void SaveWidgetMode(bool on) { SaveBoolSetting(L"TaskbarWidget", on); }
 bool LoadHideLastKnown() { return LoadBoolSetting(L"HideLastKnownDevices", false); }
 void SaveHideLastKnown(bool on) { SaveBoolSetting(L"HideLastKnownDevices", on); }
+bool LoadTrayWhenEmpty() { return LoadBoolSetting(L"MoveToTrayWhenEmpty", false); }
+void SaveTrayWhenEmpty(bool on) { SaveBoolSetting(L"MoveToTrayWhenEmpty", on); }
 bool LoadShowDisconnectedDevices() { return LoadBoolSetting(L"ShowDisconnectedDevices", false); }
 void SaveShowDisconnectedDevices(bool on) { SaveBoolSetting(L"ShowDisconnectedDevices", on); }
 bool LoadDimSleeping() { return LoadBoolSetting(L"DimSleepingDevices", true); }
 void SaveDimSleeping(bool on) { SaveBoolSetting(L"DimSleepingDevices", on); }
 bool LoadRecordHistory() { return LoadBoolSetting(L"RecordBatteryHistory", true); }
+bool LoadMakeRoom() { return LoadBoolSetting(L"MakeRoomForOtherWidgets", true); }
+void SaveMakeRoom(bool on) { SaveBoolSetting(L"MakeRoomForOtherWidgets", on); }
+// Signed: stored as a DWORD, read back as int, so negative values move the widget towards the tray.
+int LoadTaskbarOffset() {
+    DWORD v = 0, sz = sizeof(v);
+    RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, L"TaskbarOffset", RRF_RT_REG_DWORD, nullptr, &v, &sz);
+    return (int)v;
+}
+void SaveTaskbarOffset(int px) {
+    DWORD v = (DWORD)px;
+    if (px) RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, L"TaskbarOffset", REG_DWORD, &v, sizeof(v));
+    else RegDeleteKeyValueW(HKEY_CURRENT_USER, kSettingsKey, L"TaskbarOffset");
+}
 void SaveRecordHistory(bool on) { SaveBoolSetting(L"RecordBatteryHistory", on); }
 bool LoadWidgetBackground() { return LoadBoolSetting(L"WidgetBackground", false); }
 void SaveWidgetBackground(bool on) { SaveBoolSetting(L"WidgetBackground", on); }
@@ -526,6 +644,19 @@ void SetWidgetMonitor(const std::wstring& v) {
 }
 bool LoadStacked() { return LoadBoolSetting(L"StackedLayout", false); }
 void SaveStacked(bool on) { SaveBoolSetting(L"StackedLayout", on); }
+widget::VerticalPlace LoadVerticalPlace() {
+    DWORD v = 0, sz = sizeof(v);
+    RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, L"VerticalPlace", RRF_RT_REG_DWORD, nullptr, &v, &sz);
+    return v == 1 ? widget::VerticalPlace::Top : v == 2 ? widget::VerticalPlace::AboveTray
+         : v == 3 ? widget::VerticalPlace::Bottom : widget::VerticalPlace::Auto;
+}
+void SaveVerticalPlace(widget::VerticalPlace p) {
+    DWORD v = p == widget::VerticalPlace::Top ? 1 : p == widget::VerticalPlace::AboveTray ? 2
+              : p == widget::VerticalPlace::Bottom ? 3 : 0;
+    RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, L"VerticalPlace", REG_DWORD, &v, sizeof(v));
+}
+bool LoadFarLeft() { return LoadBoolSetting(L"WidgetFarLeft", false); }
+void SaveFarLeft(bool on) { SaveBoolSetting(L"WidgetFarLeft", on); }
 bool LoadBrandColors() { return LoadBoolSetting(L"BrandColors", false); }
 void SaveBrandColors(bool on) { SaveBoolSetting(L"BrandColors", on); }
 DWORD LoadPollSeconds() {
@@ -693,7 +824,15 @@ std::wstring StatusText(const TrayEntry& e) {
     return t;
 }
 
-void TrayCall(DWORD msg, UINT uid, HICON icon, const std::wstring& tip, const wchar_t* infoTitle = nullptr,
+void TraySetVersion(UINT uid) {
+    NOTIFYICONDATAW nid{ sizeof(nid) };
+    nid.hWnd = g_hwnd;
+    nid.uID = uid;
+    nid.uVersion = NOTIFYICON_VERSION_4;
+    Shell_NotifyIconW(NIM_SETVERSION, &nid);
+}
+
+bool TrayCall(DWORD msg, UINT uid, HICON icon, const std::wstring& tip, const wchar_t* infoTitle = nullptr,
               const std::wstring& info = L"") {
     NOTIFYICONDATAW nid{ sizeof(nid) };
     nid.hWnd = g_hwnd;
@@ -708,11 +847,20 @@ void TrayCall(DWORD msg, UINT uid, HICON icon, const std::wstring& tip, const wc
         CopyTip(nid.szInfo, ARRAYSIZE(nid.szInfo), info);
         nid.dwInfoFlags = NIIF_WARNING;
     }
-    Shell_NotifyIconW(msg, &nid);
-    if (msg == NIM_ADD) {
-        nid.uVersion = NOTIFYICON_VERSION_4;
-        Shell_NotifyIconW(NIM_SETVERSION, &nid);
-    }
+    bool ok = Shell_NotifyIconW(msg, &nid) != FALSE;
+    if (ok && msg == NIM_ADD) TraySetVersion(uid);
+    return ok;
+}
+
+// Adds or updates a tray icon; returns whether the shell has it. While Explorer is busy (e.g. at sign-in)
+// NIM_ADD can time out and report failure although the icon was added, and NIM_MODIFY fails for an icon
+// the shell no longer has, so each one falls back to the other.
+bool TrayShow(bool added, UINT uid, HICON icon, const std::wstring& tip, const wchar_t* infoTitle = nullptr,
+              const std::wstring& info = L"") {
+    if (TrayCall(added ? NIM_MODIFY : NIM_ADD, uid, icon, tip, infoTitle, info)) return true;
+    if (!TrayCall(added ? NIM_ADD : NIM_MODIFY, uid, icon, tip, infoTitle, info)) return false;
+    if (!added) TraySetVersion(uid);
+    return true;
 }
 
 void TrayDelete(UINT uid) {
@@ -722,10 +870,7 @@ void TrayDelete(UINT uid) {
     Shell_NotifyIconW(NIM_DELETE, &nid);
 }
 
-void ShowBatteryAlert(TrayEntry& e) {
-    const std::wstring title = T(L"Low battery");
-    const std::wstring message = TF(L"{name} is at {percent}%",
-                                   { { L"name", DisplayName(e) }, { L"percent", std::to_wstring(e.st.percent) } });
+void ShowNotification(TrayEntry& e, const std::wstring& title, const std::wstring& message) {
     if (!g_useWidget && e.added) {
         TrayCall(NIM_MODIFY, e.uid, e.icon, DisplayName(e) + L"\n" + StatusText(e), title.c_str(), message);
         return;
@@ -733,14 +878,24 @@ void ShowBatteryAlert(TrayEntry& e) {
     // Windows notification balloons need a tray icon. Keep a temporary one in widget mode
     // long enough for the shell to display the notification, then remove it.
     if (!g_placeholderIcon) g_placeholderIcon = RenderIcon(L"-", -1, Foreground(), Foreground(), true);
-    TrayCall(g_alertIconAdded ? NIM_MODIFY : NIM_ADD, ALERT_ICON_ID, g_placeholderIcon,
-             L"BatteryHub", title.c_str(), message);
-    g_alertIconAdded = true;
-    SetTimer(g_hwnd, TIMER_ALERT_ICON, 60 * 1000, nullptr);
+    g_alertIconAdded =
+        TrayShow(g_alertIconAdded, ALERT_ICON_ID, g_placeholderIcon, L"BatteryHub", title.c_str(), message);
+    if (g_alertIconAdded) SetTimer(g_hwnd, TIMER_ALERT_ICON, 60 * 1000, nullptr);
+}
+
+void ShowBatteryAlert(TrayEntry& e) {
+    ShowNotification(e, T(L"Low battery"), TF(L"{name} is at {percent}%",
+                                              { { L"name", DisplayName(e) }, { L"percent", std::to_wstring(e.st.percent) } }));
+}
+
+void ShowChargeLimitAlert(TrayEntry& e) {
+    ShowNotification(e, T(L"You can unplug it"),
+                     TF(L"{name} is charged to {percent}%. Stopping around here helps the battery last longer.",
+                        { { L"name", DisplayName(e) }, { L"percent", std::to_wstring(e.st.percent) } }));
 }
 
 void UpdatePlaceholder() {
-    if (g_useWidget) {
+    if (g_useWidget && !g_emptyToTray) {
         if (g_placeholder) { TrayDelete(PLACEHOLDER_ID); g_placeholder = false; }
         return;
     }
@@ -748,8 +903,8 @@ void UpdatePlaceholder() {
     for (auto& [k, e] : g_entries) any |= e.added;
     if (!any && !g_placeholder) {
         if (!g_placeholderIcon) g_placeholderIcon = RenderIcon(L"-", -1, Foreground(), Foreground(), true);
-        TrayCall(NIM_ADD, PLACEHOLDER_ID, g_placeholderIcon, std::wstring(L"BatteryHub\n") + T(L"No devices with battery info found"));
-        g_placeholder = true;
+        g_placeholder = TrayShow(false, PLACEHOLDER_ID, g_placeholderIcon,
+                                 std::wstring(L"BatteryHub\n") + T(L"No devices with battery info found"));
     } else if (any && g_placeholder) {
         TrayDelete(PLACEHOLDER_ID);
         g_placeholder = false;
@@ -779,8 +934,7 @@ void ApplyEntry(TrayEntry& e) {
     }
     std::wstring tip = DisplayName(e) + L"\n" + StatusText(e);
 
-    TrayCall(e.added ? NIM_MODIFY : NIM_ADD, e.uid, e.icon, tip);
-    e.added = true;
+    e.added = TrayShow(e.added, e.uid, e.icon, tip);
 }
 
 int KindOrder(DeviceKind k) {  // default order: headset first, then mouse, ...
@@ -861,7 +1015,7 @@ void PublishSeelenState(const std::vector<TrayEntry*>& list) {
 
 void UpdateWidget() {
     std::vector<TrayEntry*> list = OrderedEntries(true);
-    if (!g_useWidget) {
+    if (!g_useWidget || !widget::Alive()) {
 #if defined(SEELEN_INTEGRATION)
         PublishSeelenState(list);
 #endif
@@ -898,6 +1052,8 @@ void UpdateWidget() {
 #endif
 }
 
+void Reconcile();
+
 void OnResults(std::vector<DeviceStatus>& results) {
     g_initialScanCompleted = true;
 #if defined(SEELEN_INTEGRATION)
@@ -908,6 +1064,7 @@ void OnResults(std::vector<DeviceStatus>& results) {
     for (auto& s : results) {
         auto& e = g_entries[s.key];
         if (!e.uid) e.uid = StableId(s.key);
+        const int previousPercent = e.st.connected && !e.st.asleep ? e.st.percent : -1;  // the last fresh reading
         e.st = s;
         if (s.percent >= 0) e.lastPct = s.percent;
         e.lastSeen = GetTickCount64();
@@ -922,8 +1079,10 @@ void OnResults(std::vector<DeviceStatus>& results) {
         if (g_alertLatches.size() > 256) g_alertLatches.erase(g_alertLatches.begin());
         if (g_recordHistory && s.connected && !s.asleep && s.percent >= 0)
             battery_history::Observe(s.key, s.percent, s.charging);
+        bool limit = !IsHidden(s.key) && alerts::ShouldNotifyChargeLimit(s, g_chargeLimit, previousPercent, e.limitWarned);
         ApplyEntry(e);
         if (notify) ShowBatteryAlert(e);
+        else if (limit) ShowChargeLimitAlert(e);
     }
     for (auto it = g_entries.begin(); it != g_entries.end();) {
         auto& e = it->second;
@@ -945,24 +1104,49 @@ void OnResults(std::vector<DeviceStatus>& results) {
             ++it;
         }
     }
+    Reconcile();  // react to the new device list now, not at the next timer tick
     UpdatePlaceholder();
     UpdateWidget();
+    memory_trim::Soon();  // the poll (HID, Bluetooth, drivers) is done: give its pages back until the next one
+}
+
+bool NothingShown() {
+    for (const auto& [k, e] : g_entries)
+        if (IsShown(e)) return false;
+    return true;
 }
 
 // Makes the actual display match the chosen mode; falls back to tray icons if the taskbar
 // widget cannot be created (e.g. Explorer not ready yet). Called once a second.
+// With "Move to tray when no devices" the strip gives way to the tray placeholder while nothing is shown.
 void Reconcile() {
-    bool alive = g_wantWidget && widget::Alive();
-    if (g_wantWidget && !alive) alive = widget::Create(g_inst, g_hwnd, WM_WIDGET_CLICK, g_lightTaskbar);
-    if (!g_wantWidget) widget::Destroy();
-    bool changed = alive != g_useWidget;
-    g_useWidget = alive;
-    if (changed) {
+    // Taskbar mode, option on, nothing to show: the strip is replaced by the tray placeholder.
+    bool emptyToTray = g_wantWidget && g_trayWhenEmpty && NothingShown();
+    bool wasAlive = widget::Alive();
+    // Keep, create or remove the strip.
+    bool alive = g_wantWidget && !emptyToTray && wasAlive;
+    if (g_wantWidget && !emptyToTray && !alive) alive = widget::Create(g_inst, g_hwnd, WM_WIDGET_CLICK, g_lightTaskbar);
+    if (!g_wantWidget || emptyToTray) widget::Destroy();
+    // Stays in widget mode while swapped, so device icons are not added to the tray in between.
+    bool useWidget = alive || emptyToTray;
+    bool changed = useWidget != g_useWidget || emptyToTray != g_emptyToTray;
+    g_useWidget = useWidget;
+    g_emptyToTray = emptyToTray;
+    // Refresh after a change, or when the strip was just re-created.
+    if (changed || (alive && !wasAlive)) {
         for (auto& [k, e] : g_entries) ApplyEntry(e);
         UpdatePlaceholder();
         UpdateWidget();
     } else if (g_useWidget) {
         widget::Reposition();
+    } else {
+        // Retry tray icons whose NIM_ADD failed while the shell notification area was starting.
+        bool anyAdded = false;
+        for (auto& [k, e] : g_entries) {
+            if (!e.added && IsShown(e)) ApplyEntry(e);
+            anyAdded |= e.added;
+        }
+        if (anyAdded == g_placeholder) UpdatePlaceholder();
     }
 }
 
@@ -985,6 +1169,12 @@ void SetHideLastKnown(bool on) {
     for (auto& [k, e] : g_entries) ApplyEntry(e);
     UpdatePlaceholder();
     UpdateWidget();
+}
+
+void SetTrayWhenEmpty(bool on) {
+    g_trayWhenEmpty = on;
+    SaveTrayWhenEmpty(on);
+    Reconcile();
 }
 
 void SetShowDisconnectedDevices(bool on) {
@@ -1039,6 +1229,29 @@ void SetStacked(bool on) {
     UpdateWidget();
 }
 
+void SetMakeRoom(bool on) {
+    g_makeRoom = on;
+    SaveMakeRoom(on);
+    widget::SetMakeRoom(on);
+}
+
+void SetTaskbarOffset(int px) {
+    SaveTaskbarOffset(px);
+    if (g_useWidget) widget::Reposition();
+}
+
+void SetWidgetPlace(widget::VerticalPlace p) {
+    g_verticalPlace = p;
+    SaveVerticalPlace(p);
+    widget::SetVerticalPlace(p);
+}
+
+void SetFarLeft(bool on) {
+    g_farLeft = on;
+    SaveFarLeft(on);
+    widget::SetFarLeft(on);
+}
+
 #if defined(SEELEN_INTEGRATION)
 void SetSeelenMonochrome(bool on) {
     g_seelenMonochrome = on;
@@ -1052,6 +1265,21 @@ void SetBrandColors(bool on) {
     SaveBrandColors(on);
     RedrawAll();
     UpdateWidget();
+}
+
+void SetChargeLimit(int limit) {
+    g_chargeLimit = limit;
+    DWORD v = (DWORD)limit;
+    RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, L"ChargeLimitAlert", REG_DWORD, &v, sizeof(v));
+    for (auto& [k, e] : g_entries) e.limitWarned = false;
+}
+
+int LoadChargeLimit() {
+    DWORD v = 0, sz = sizeof(v);
+    RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, L"ChargeLimitAlert", RRF_RT_REG_DWORD, nullptr, &v, &sz);
+    for (int l : alerts::kChargeLimits)
+        if ((int)v == l) return l;
+    return 0;
 }
 
 void SetPollSeconds(DWORD seconds) {
@@ -1152,6 +1380,7 @@ HWND CreateMenuOwner(const POINT& point) {
 
 void ShowMenu() {
     ApplyMenuTheme(g_lightTaskbar);
+    MenuIcons icons(g_lightTaskbar);  // freed after the menu closes
     HMENU m = CreatePopupMenu();
     std::vector<std::wstring> keys;  // device index -> device key; menu id ID_DEVICE_FIRST + index * DEV_STRIDE + command
     std::vector<TrayEntry*> all = OrderedEntries(false), shown = OrderedEntries(true);
@@ -1171,6 +1400,7 @@ void ShowMenu() {
         AppendMenuW(sub, MF_STRING | (canRight ? 0 : MF_GRAYED), base + DEV_RIGHT, g_wantWidget ? T(L"Move right") : T(L"Move down"));
         AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(sub, MF_STRING, base + DEV_RENAME, T(L"Rename device..."));
+        icons.SetLast(sub, 0xE8AC);  // Rename
         AppendMenuW(sub, MF_STRING | (g_aliases.count(k) ? 0 : MF_GRAYED),
                     base + DEV_RESET_NAME, T(L"Reset to original name"));
         HMENU alertMenu = CreatePopupMenu();
@@ -1187,15 +1417,32 @@ void ShowMenu() {
                         base + DEV_ALERT_FIRST + i, label.c_str());
         }
         AppendMenuW(sub, MF_POPUP, (UINT_PTR)alertMenu, T(L"Battery alerts"));
+        icons.SetLast(sub, 0xEA8F);  // Ringer
         AppendMenuW(sub, MF_STRING, base + DEV_HISTORY, T(L"Battery history..."));
+        icons.SetLast(sub, 0xE81C);  // History
         std::wstring line = DisplayName(*e) + L":  " + StatusText(*e) + L"   [" + T(e->st.via) + L"]";
         AppendMenuW(m, MF_POPUP | (IsHidden(k) ? 0 : MF_CHECKED), (UINT_PTR)sub, line.c_str());
+        icons.SetLast(m, widget::DeviceGlyph(e->st.kind, e->st.via == L"Bluetooth"));
         keys.push_back(k);
     }
     AppendMenuW(m, MF_STRING | (g_hideLastKnown ? MF_CHECKED : 0), ID_HIDE_LAST_KNOWN, T(L"Hide last known / asleep devices"));
+    UINT emptyFlags = MF_STRING | (g_trayWhenEmpty ? MF_CHECKED : 0) | (g_wantWidget ? 0 : MF_GRAYED);
+    AppendMenuW(m, emptyFlags, ID_TRAY_WHEN_EMPTY, T(L"Move to tray when no devices"));
     AppendMenuW(m, MF_STRING | (g_showDisconnectedDevices ? MF_CHECKED : 0), ID_SHOW_DISCONNECTED, T(L"Show disconnected devices"));
     AppendMenuW(m, MF_STRING | (g_dimSleeping ? MF_CHECKED : 0), ID_DIM_SLEEPING, T(L"Dim sleeping devices"));
     AppendMenuW(m, MF_STRING | (g_recordHistory ? MF_CHECKED : 0), ID_RECORD_HISTORY, T(L"Record battery history"));
+    {
+        HMENU sub = CreatePopupMenu();
+        AppendMenuW(sub, MF_STRING, ID_LIMIT_OFF, T(L"Off"));
+        AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
+        UINT checked = ID_LIMIT_OFF;
+        for (UINT i = 0; i < (UINT)alerts::kChargeLimitCount; i++) {
+            AppendMenuW(sub, MF_STRING, ID_LIMIT_FIRST + i, (std::to_wstring(alerts::kChargeLimits[i]) + L"%").c_str());
+            if (g_chargeLimit == alerts::kChargeLimits[i]) checked = ID_LIMIT_FIRST + i;
+        }
+        CheckMenuRadioItem(sub, ID_LIMIT_OFF, ID_LIMIT_FIRST + alerts::kChargeLimitCount - 1, checked, MF_BYCOMMAND);
+        AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, T(L"Notify when charged to (saves the battery)"));
+    }
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (g_wantWidget ? MF_CHECKED : 0), ID_MODE_WIDGET, T(L"Show on the taskbar (icon + percentage)"));
     AppendMenuW(m, MF_STRING | (!g_wantWidget ? MF_CHECKED : 0), ID_MODE_TRAY, T(L"Show as tray icons"));
@@ -1216,6 +1463,45 @@ void ShowMenu() {
     stackedFlags |= g_wantWidget ? 0 : MF_GRAYED;
 #endif
     AppendMenuW(m, stackedFlags, ID_STACKED, T(L"Icons above percentages (narrower)"));
+    {
+        HMENU sub = CreatePopupMenu();
+        UINT f = MF_STRING | (g_wantWidget ? 0 : MF_GRAYED);
+        const UINT count = ARRAYSIZE(POSITION_OFFSETS);
+        const int current = LoadTaskbarOffset();
+        UINT checked = ID_POSITION_FIRST + count;
+        for (UINT i = 0; i < count; i++) {
+            int px = POSITION_OFFSETS[i];
+            std::wstring label = px ? TF(L"{px} px from the notification area", { { L"px", std::to_wstring(px) } })
+                                    : T(L"Next to the notification area");
+            AppendMenuW(sub, f, ID_POSITION_FIRST + i, label.c_str());
+            if (px == current) checked = ID_POSITION_FIRST + i;
+        }
+        // Any other value (typed in, or set by hand in the registry) shows as the custom entry.
+        std::wstring custom = checked == ID_POSITION_FIRST + count
+                                  ? TF(L"Custom ({px} px)...", { { L"px", std::to_wstring(current) } })
+                                  : std::wstring(T(L"Custom..."));
+        AppendMenuW(sub, f, ID_POSITION_FIRST + count, custom.c_str());
+        CheckMenuRadioItem(sub, ID_POSITION_FIRST, ID_POSITION_FIRST + count, checked, MF_BYCOMMAND);
+        AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(sub, f | (g_makeRoom ? MF_CHECKED : 0), ID_MAKE_ROOM, T(L"Make room for other taskbar widgets"));
+        AppendMenuW(m, MF_POPUP | (g_wantWidget ? 0 : MF_GRAYED), (UINT_PTR)sub, T(L"Position on the taskbar"));
+    }
+    // Left / right taskbar: choose where the column sits.
+    if (widget::Vertical()) {
+        HMENU sub = CreatePopupMenu();
+        AppendMenuW(sub, MF_STRING, ID_PLACE_AUTO, T(L"Automatic (keeps clear of app icons)"));
+        AppendMenuW(sub, MF_STRING, ID_PLACE_TOP, T(L"Top of the taskbar"));
+        AppendMenuW(sub, MF_STRING, ID_PLACE_TRAY, T(L"Above the notification area"));
+        AppendMenuW(sub, MF_STRING, ID_PLACE_BOTTOM,
+                    T(L"Bottom of the taskbar (moves the taskbar icons up, Windows 11)"));
+        CheckMenuRadioItem(sub, ID_PLACE_AUTO, ID_PLACE_BOTTOM,
+                           g_verticalPlace == widget::VerticalPlace::Top ? ID_PLACE_TOP
+                           : g_verticalPlace == widget::VerticalPlace::AboveTray ? ID_PLACE_TRAY
+                           : g_verticalPlace == widget::VerticalPlace::Bottom ? ID_PLACE_BOTTOM : ID_PLACE_AUTO,
+                           MF_BYCOMMAND);
+        AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, T(L"Position on a vertical taskbar"));
+    }
+    AppendMenuW(m, MF_STRING | (g_farLeft ? MF_CHECKED : 0) | (g_wantWidget ? 0 : MF_GRAYED), ID_FAR_LEFT, T(L"At the left end of the taskbar"));
     // With more than one monitor: choose which taskbars show the widget (all, main only, or one monitor).
     auto monitors = widget::OtherMonitors();
     if (monitors.size() > 31) monitors.resize(31);
@@ -1226,9 +1512,12 @@ void ShowMenu() {
         AppendMenuW(sub, f, ID_MONITOR_MAIN, T(L"Main monitor only"));
         UINT checked = g_widgetMonitor == L"main" ? ID_MONITOR_MAIN : ID_MONITOR_ALL;
         bool found = g_widgetMonitor == L"all" || g_widgetMonitor == L"main";
+        std::vector<std::wstring> ids;
+        for (const auto& mo : monitors) ids.push_back(mo.id);
+        int chosen = found ? -1 : widget::FindMonitor(ids, g_widgetMonitor);
         for (UINT i = 0; i < monitors.size(); i++) {
             AppendMenuW(sub, f, ID_MONITOR_FIRST + i, TF(L"{monitor} only", { { L"monitor", monitors[i].label } }).c_str());
-            if (monitors[i].id == g_widgetMonitor) { checked = ID_MONITOR_FIRST + i; found = true; }
+            if ((int)i == chosen) { checked = ID_MONITOR_FIRST + i; found = true; }
         }
         if (!found) {  // the chosen monitor is unplugged: the main taskbar shows the widget meanwhile
             AppendMenuW(sub, MF_STRING | MF_GRAYED, ID_MONITOR_FIRST + 31, T(L"Chosen monitor (not connected, shown on main)"));
@@ -1236,6 +1525,7 @@ void ShowMenu() {
         }
         CheckMenuRadioItem(sub, ID_MONITOR_ALL, ID_MONITOR_FIRST + 31, checked, MF_BYCOMMAND);
         AppendMenuW(m, MF_POPUP | (g_wantWidget ? 0 : MF_GRAYED), (UINT_PTR)sub, T(L"Show the widget on"));
+        icons.SetLast(m, 0xE7F4);  // TVMonitor
     }
     AppendMenuW(m, MF_STRING | (g_brandColors ? MF_CHECKED : 0), ID_BRAND_COLORS, T(L"Brand colors (Razer green, Logitech blue, ...)"));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
@@ -1256,6 +1546,7 @@ void ShowMenu() {
         AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(sub, MF_STRING, ID_LANG_ADD, T(L"Add your own language..."));
         AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, T(L"Language"));
+        icons.SetLast(m, 0xE774);  // Globe
     }
     {
         HMENU sub = CreatePopupMenu();
@@ -1270,6 +1561,7 @@ void ShowMenu() {
         }
         if (checked) CheckMenuRadioItem(sub, ID_POLL_FIRST, ID_POLL_FIRST + count - 1, checked, MF_BYCOMMAND);
         AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, T(L"Check battery every"));
+        icons.SetLast(m, 0xE916);  // Stopwatch
     }
     AppendMenuW(m, MF_STRING, ID_REFRESH, T(L"Refresh now"));
     AppendMenuW(m, MF_STRING | (AutostartEnabled() ? MF_CHECKED : 0), ID_AUTOSTART, T(L"Start with Windows"));
@@ -1286,21 +1578,40 @@ void ShowMenu() {
 #endif
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, ID_EXIT, T(L"Exit"));
+    icons.Set(m, ID_REFRESH, false, 0xE72C);         // Refresh
+    icons.Set(m, ID_REPORT, false, 0xE897);          // Help
+    icons.Set(m, ID_SUPPORT, false, 0xEB51);         // Heart
+    icons.Set(m, ID_UPDATE, false, 0xE777);          // UpdateRestore
+    icons.Set(m, ID_EXIT, false, 0xE711);            // Cancel
     POINT pt;
     GetCursorPos(&pt);
     HWND menuOwner = CreateMenuOwner(pt);
-    UINT cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_WORKAREA |
-                              (i18n::Rtl() ? TPM_LAYOUTRTL : 0), pt.x, pt.y, 0, menuOwner, nullptr);
+    // Opened from the taskbar, the menu must not overlap it: Windows only keeps a menu inside the monitor,
+    // so its last items (Exit) ended up under the taskbar. Excluding the taskbar's rectangle makes Windows
+    // open the menu above it (below / beside it for a top or side taskbar).
+    TPMPARAMS tpm{ sizeof(tpm) };
+    HWND under = GetAncestor(WindowFromPoint(pt), GA_ROOT);
+    wchar_t cls[32] = {};
+    if (under) GetClassNameW(under, cls, ARRAYSIZE(cls));
+    bool fromTaskbar = !wcscmp(cls, L"Shell_TrayWnd") || !wcscmp(cls, L"Shell_SecondaryTrayWnd");
+    if (fromTaskbar) GetWindowRect(under, &tpm.rcExclude);
+    bool sideBar = fromTaskbar && tpm.rcExclude.bottom - tpm.rcExclude.top > tpm.rcExclude.right - tpm.rcExclude.left;
+    UINT cmd = TrackPopupMenuEx(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | (sideBar ? TPM_HORIZONTAL : TPM_VERTICAL) |
+                                       (i18n::Rtl() ? TPM_LAYOUTRTL : 0),
+                                pt.x, pt.y, menuOwner, fromTaskbar ? &tpm : nullptr);
     PostMessageW(menuOwner, WM_NULL, 0, 0);
     if (menuOwner != g_hwnd) DestroyWindow(menuOwner);
     DestroyMenu(m);
+    memory_trim::Soon();
     switch (cmd) {
         case ID_REFRESH: SetEvent(g_refreshEvt); break;
         case ID_AUTOSTART: SetAutostart(!AutostartEnabled()); break;
         case ID_HIDE_LAST_KNOWN: SetHideLastKnown(!g_hideLastKnown); break;
+        case ID_TRAY_WHEN_EMPTY: SetTrayWhenEmpty(!g_trayWhenEmpty); break;
         case ID_SHOW_DISCONNECTED: SetShowDisconnectedDevices(!g_showDisconnectedDevices); break;
         case ID_DIM_SLEEPING: SetDimSleeping(!g_dimSleeping); break;
         case ID_RECORD_HISTORY: g_recordHistory = !g_recordHistory; SaveRecordHistory(g_recordHistory); break;
+        case ID_LIMIT_OFF: SetChargeLimit(0); break;
         case ID_WIDGET_BACKGROUND: SetWidgetBackground(!g_widgetBackground); break;
         case ID_MONITOR_ALL: SetWidgetMonitor(L"all"); break;
         case ID_LANG_AUTO: SetLanguage(L""); break;
@@ -1308,6 +1619,12 @@ void ShowMenu() {
         case ID_MONITOR_MAIN: SetWidgetMonitor(L"main"); break;
         case ID_BRAND_COLORS: SetBrandColors(!g_brandColors); break;
         case ID_STACKED: SetStacked(!g_stacked); break;
+        case ID_MAKE_ROOM: SetMakeRoom(!g_makeRoom); break;
+        case ID_PLACE_AUTO: SetWidgetPlace(widget::VerticalPlace::Auto); break;
+        case ID_PLACE_TOP: SetWidgetPlace(widget::VerticalPlace::Top); break;
+        case ID_PLACE_TRAY: SetWidgetPlace(widget::VerticalPlace::AboveTray); break;
+        case ID_PLACE_BOTTOM: SetWidgetPlace(widget::VerticalPlace::Bottom); break;
+        case ID_FAR_LEFT: SetFarLeft(!g_farLeft); break;
         case ID_MODE_WIDGET: SetMode(true); break;
         case ID_MODE_TRAY: SetMode(false); break;
         case ID_SEELEN_INTEGRATION:
@@ -1343,7 +1660,18 @@ void ShowMenu() {
             break;
         case ID_EXIT: DestroyWindow(g_hwnd); break;
         default:
-            if (cmd >= ID_POLL_FIRST && cmd < ID_POLL_FIRST + ARRAYSIZE(POLL_SECONDS)) {
+            if (cmd >= ID_POSITION_FIRST && cmd < ID_POSITION_FIRST + ARRAYSIZE(POSITION_OFFSETS)) {
+                SetTaskbarOffset(POSITION_OFFSETS[cmd - ID_POSITION_FIRST]);
+                break;
+            }
+            if (cmd == ID_POSITION_FIRST + ARRAYSIZE(POSITION_OFFSETS)) {
+                int px = 0;
+                if (PromptTaskbarOffset(g_hwnd, LoadTaskbarOffset(), px)) SetTaskbarOffset(px);
+                break;
+            }
+            if (cmd >= ID_LIMIT_FIRST && cmd < ID_LIMIT_FIRST + (UINT)alerts::kChargeLimitCount) {
+                SetChargeLimit(alerts::kChargeLimits[cmd - ID_LIMIT_FIRST]);
+            } else if (cmd >= ID_POLL_FIRST && cmd < ID_POLL_FIRST + ARRAYSIZE(POLL_SECONDS)) {
                 SetPollSeconds(POLL_SECONDS[cmd - ID_POLL_FIRST]);
             } else if (cmd >= ID_LANG_FIRST && cmd < ID_LANG_FIRST + languages.size()) {
                 SetLanguage(languages[cmd - ID_LANG_FIRST].code);
@@ -1420,21 +1748,108 @@ std::vector<DeviceStatus> DemoDevices() {
     return devices;
 }
 
+// A closer check of the next polls (see refresh_policy.h), handed to the worker for its next poll.
+SRWLOCK g_monitorLock = SRWLOCK_INIT;
+refresh_policy::Mode g_monitorRequest = refresh_policy::Mode::Idle;
+std::set<std::wstring> g_monitorKeys;
+std::set<std::wstring> g_awakeBeforeSleep;
+DWORD g_displayState = 1;  // GUID_CONSOLE_DISPLAY_STATE: 0 off, 1 on, 2 dimmed
+
+// Bluetooth connections (GUID_BLUETOOTH_HCI_EVENT) are reported only to windows that registered a
+// handle to the radio.
+struct BluetoothRadioWatch {
+    HANDLE radio = nullptr;
+    HDEVNOTIFY notify = nullptr;
+};
+std::vector<BluetoothRadioWatch> g_btRadioWatches;
+
+void ClearBluetoothRadioWatches() {
+    for (auto& w : g_btRadioWatches) {
+        if (w.notify) UnregisterDeviceNotification(w.notify);
+        if (w.radio) CloseHandle(w.radio);
+    }
+    g_btRadioWatches.clear();
+}
+
+void DropBluetoothRadioWatch(HANDLE radio) {
+    for (auto it = g_btRadioWatches.begin(); it != g_btRadioWatches.end(); ++it) {
+        if (it->radio != radio) continue;
+        if (it->notify) UnregisterDeviceNotification(it->notify);
+        if (it->radio) CloseHandle(it->radio);
+        g_btRadioWatches.erase(it);
+        return;
+    }
+}
+
+void RefreshBluetoothRadioWatches() {
+    ClearBluetoothRadioWatches();
+    if (!g_hwnd) return;
+    BLUETOOTH_FIND_RADIO_PARAMS params{ sizeof(params) };
+    HANDLE radio = nullptr;
+    HBLUETOOTH_RADIO_FIND find = BluetoothFindFirstRadio(&params, &radio);
+    if (!find) return;
+    do {
+        DEV_BROADCAST_HANDLE filter{ sizeof(filter) };
+        filter.dbch_devicetype = DBT_DEVTYP_HANDLE;
+        filter.dbch_handle = radio;
+        HDEVNOTIFY notify = RegisterDeviceNotificationW(g_hwnd, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
+        if (notify) {
+            g_btRadioWatches.push_back({ radio, notify });
+        } else {
+            CloseHandle(radio);
+        }
+        radio = nullptr;
+    } while (BluetoothFindNextRadio(find, &radio));
+    BluetoothFindRadioClose(find);
+}
+
+std::set<std::wstring> AwakeDevices() {
+    std::set<std::wstring> keys;
+    for (const auto& [k, e] : g_entries)
+        if (e.st.connected && !e.st.asleep) keys.insert(k);
+    return keys;
+}
+
+std::set<std::wstring> DevicesWithLevel() {
+    std::set<std::wstring> keys;
+    for (const auto& [k, e] : g_entries)
+        if (e.st.connected && e.st.percent >= 0) keys.insert(k);
+    return keys;
+}
+
+void RequestMonitor(refresh_policy::Mode mode, std::set<std::wstring> keys) {
+    AcquireSRWLockExclusive(&g_monitorLock);
+    if (mode != refresh_policy::Mode::Arrival || g_monitorRequest != refresh_policy::Mode::Resume) {
+        g_monitorRequest = mode;
+        g_monitorKeys = std::move(keys);
+    }
+    ReleaseSRWLockExclusive(&g_monitorLock);
+}
+
 DWORD WINAPI Worker(LPVOID) {
-    // At sign-in a USB receiver may enumerate before its wireless link is ready.
-    constexpr DWORD startupPollDelays[] = { 3000, 7000, 15000 };
-    size_t startupPoll = 0;
+    refresh_policy::Monitor monitor;
+    monitor.BeginStartup();
     HANDLE events[2] = { g_stopEvt, g_refreshEvt };
     for (;;) {
+        AcquireSRWLockExclusive(&g_monitorLock);
+        refresh_policy::Mode request = std::exchange(g_monitorRequest, refresh_policy::Mode::Idle);
+        std::set<std::wstring> keys = std::move(g_monitorKeys);
+        g_monitorKeys.clear();
+        ReleaseSRWLockExclusive(&g_monitorLock);
+        if (request == refresh_policy::Mode::Resume) monitor.BeginResume(std::move(keys));
+        else if (request == refresh_policy::Mode::Arrival) monitor.BeginArrival(std::move(keys));
+
         auto* v = new std::vector<DeviceStatus>(g_demo ? DemoDevices() : PollAllDevices());
+        DWORD delay = monitor.DelayAfterPoll(*v, g_pollIntervalMs);
         if (!PostMessageW(g_hwnd, WM_RESULTS, 0, (LPARAM)v)) delete v;
-        DWORD delay = g_pollIntervalMs;
-        if (startupPoll < ARRAYSIZE(startupPollDelays)) delay = startupPollDelays[startupPoll++];
-        if (WaitForMultipleObjects(2, events, FALSE, delay) == WAIT_OBJECT_0) return 0;
+        DWORD wait = WaitForMultipleObjects(2, events, FALSE, delay);
+        if (wait == WAIT_OBJECT_0) return 0;
+        monitor.OnWaitFinished(wait == WAIT_TIMEOUT);
     }
 }
 
 void RefreshSoon(UINT ms) { SetTimer(g_hwnd, TIMER_DEBOUNCE, ms, nullptr); }
+void RefreshAfterWake(UINT ms) { SetTimer(g_hwnd, TIMER_RESUME, ms, nullptr); }
 
 LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == g_taskbarCreatedMsg && msg != 0) {  // Explorer restarted
@@ -1466,14 +1881,65 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_ENDSESSION:  // sign-out / shutdown / installer restart manager
             if (wp) DestroyWindow(h);
             return 0;
-        case WM_DEVICECHANGE:
-            if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE) RefreshSoon(2500);
+        case WM_DEVICECHANGE: {
+            auto* hdr = reinterpret_cast<const DEV_BROADCAST_HDR*>(lp);
+            bool handle = hdr && hdr->dbch_devicetype == DBT_DEVTYP_HANDLE;
+            if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE) {
+                if (hdr && hdr->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE) {
+                    auto* iface = reinterpret_cast<const DEV_BROADCAST_DEVICEINTERFACE_W*>(lp);
+                    if (iface->dbcc_classguid == GUID_BTHPORT_DEVICE_INTERFACE) RefreshBluetoothRadioWatches();
+                    else if (wp == DBT_DEVICEARRIVAL) RequestMonitor(refresh_policy::Mode::Arrival, DevicesWithLevel());
+                }
+                if (handle && wp == DBT_DEVICEREMOVECOMPLETE)
+                    DropBluetoothRadioWatch(reinterpret_cast<const DEV_BROADCAST_HANDLE*>(lp)->dbch_handle);
+                RefreshSoon(2500);
+            } else if (handle && (wp == DBT_DEVICEQUERYREMOVE || wp == DBT_DEVICEREMOVEPENDING)) {
+                // Let the radio go: an open handle would block its removal.
+                DropBluetoothRadioWatch(reinterpret_cast<const DEV_BROADCAST_HANDLE*>(lp)->dbch_handle);
+            } else if (handle && wp == DBT_DEVICEQUERYREMOVEFAILED) {
+                RefreshBluetoothRadioWatches();
+            } else if (handle && wp == DBT_CUSTOMEVENT) {
+                auto* bh = reinterpret_cast<const DEV_BROADCAST_HANDLE*>(lp);
+                // HCI_CONNECTION_TYPE_*: 1 classic (ACL), 2 the voice link of a call (SCO), 3 Bluetooth LE.
+                constexpr UCHAR kHciAcl = 1, kHciSco = 2;
+                BTH_HCI_EVENT_INFO info{};
+                if (bh->dbch_eventguid == GUID_BLUETOOTH_HCI_EVENT &&
+                    bh->dbch_size >= offsetof(DEV_BROADCAST_HANDLE, dbch_data) + sizeof(info)) {
+                    memcpy(&info, bh->dbch_data, sizeof(info));
+                    if (info.connectionType != kHciSco) {
+                        // A Bluetooth headset reports its level a few seconds after it connects.
+                        if (info.connected && info.connectionType == kHciAcl)
+                            RequestMonitor(refresh_policy::Mode::Arrival, DevicesWithLevel());
+                        RefreshSoon(2500);
+                    }
+                }
+            }
             return TRUE;
+        }
         case WM_POWERBROADCAST:
-            if (wp == PBT_APMRESUMEAUTOMATIC) RefreshSoon(5000);
+            if (wp == PBT_APMSUSPEND) {
+                g_awakeBeforeSleep = AwakeDevices();
+            } else if (wp == PBT_APMRESUMEAUTOMATIC) {
+                RefreshAfterWake(5000);
+            } else if (wp == PBT_POWERSETTINGCHANGE && lp) {
+                // Modern Standby may not report a suspend / resume: the display turning off and on stands in.
+                auto* ps = reinterpret_cast<const POWERBROADCAST_SETTING*>(lp);
+                if (ps->PowerSetting == kConsoleDisplayStateGuid && ps->DataLength >= sizeof(DWORD)) {
+                    DWORD state = *reinterpret_cast<const DWORD*>(ps->Data);
+                    if (g_displayState != 0 && state == 0) g_awakeBeforeSleep = AwakeDevices();
+                    else if (g_displayState == 0 && state != 0) RefreshAfterWake(3000);
+                    g_displayState = state;
+                }
+            }
             return TRUE;
         case WM_TIMER:
             if (wp == TIMER_DEBOUNCE) { KillTimer(h, TIMER_DEBOUNCE); SetEvent(g_refreshEvt); }
+            if (wp == TIMER_RESUME) {
+                KillTimer(h, TIMER_RESUME);
+                RequestMonitor(refresh_policy::Mode::Resume, std::move(g_awakeBeforeSleep));
+                g_awakeBeforeSleep.clear();
+                SetEvent(g_refreshEvt);
+            }
             if (wp == TIMER_WIDGET) { Reconcile(); updates::Tick(h); }
             if (wp == TIMER_ALERT_ICON) {
                 KillTimer(h, TIMER_ALERT_ICON);
@@ -1488,6 +1954,8 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_DESTROY:
             updates::Shutdown();
+            KillTimer(h, TIMER_DEBOUNCE);
+            KillTimer(h, TIMER_RESUME);
 #if defined(SEELEN_INTEGRATION)
             seelen_bridge::Stop();
 #endif
@@ -1653,17 +2121,28 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
     filter.dbcc_classguid = GUID_DEVINTERFACE_HID;
     HDEVNOTIFY notify = RegisterDeviceNotificationW(g_hwnd, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
+    // Bluetooth radios coming and going, and the connections on each one.
+    filter.dbcc_classguid = GUID_BTHPORT_DEVICE_INTERFACE;
+    HDEVNOTIFY radioNotify = RegisterDeviceNotificationW(g_hwnd, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
+    RefreshBluetoothRadioWatches();
+    HPOWERNOTIFY displayNotify =
+        RegisterPowerSettingNotification(g_hwnd, &kConsoleDisplayStateGuid, DEVICE_NOTIFY_WINDOW_HANDLE);
 
     g_refreshEvt = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     g_stopEvt = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     g_wantWidget = LoadWidgetMode();
     g_hideLastKnown = LoadHideLastKnown();
+    g_trayWhenEmpty = LoadTrayWhenEmpty();
     g_showDisconnectedDevices = LoadShowDisconnectedDevices();
     g_dimSleeping = LoadDimSleeping();
     g_recordHistory = LoadRecordHistory();
+    g_chargeLimit = LoadChargeLimit();
     g_widgetBackground = LoadWidgetBackground();
     g_brandColors = LoadBrandColors();
     g_stacked = LoadStacked();
+    g_makeRoom = LoadMakeRoom();
+    widget::SetMakeRoom(g_makeRoom);
+    g_farLeft = LoadFarLeft();
 #if defined(SEELEN_INTEGRATION)
     g_seelenIntegration = LoadBoolSetting(L"SeelenIntegrationEnabled", true);
     g_seelenMonochrome = LoadBoolSetting(L"SeelenMonochrome", false);
@@ -1672,6 +2151,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     g_seelenGuideShown = LoadBoolSetting(L"SeelenFirstRunGuideShown", false);
     g_pollIntervalMs = LoadPollSeconds() * 1000;
     widget::SetStacked(g_stacked);
+    g_verticalPlace = LoadVerticalPlace();
+    widget::SetVerticalPlace(g_verticalPlace);
+    widget::SetFarLeft(g_farLeft);
     widget::SetBackground(g_widgetBackground);  // remembered by the widget across re-creation
     i18n::Init();
     g_widgetMonitor = LoadWidgetMonitor();
@@ -1705,6 +2187,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     // drain results posted after shutdown started
     while (PeekMessageW(&m, nullptr, WM_RESULTS, WM_RESULTS, PM_REMOVE)) delete reinterpret_cast<std::vector<DeviceStatus>*>(m.lParam);
     if (notify) UnregisterDeviceNotification(notify);
+    if (radioNotify) UnregisterDeviceNotification(radioNotify);
+    ClearBluetoothRadioWatches();
+    if (displayNotify) UnregisterPowerSettingNotification(displayNotify);
     if (g_worker) CloseHandle(g_worker);
     ReleaseMutex(mutex);
     return 0;

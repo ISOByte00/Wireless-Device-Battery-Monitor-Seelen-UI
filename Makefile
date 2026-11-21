@@ -50,6 +50,8 @@ test: test-update-core test-update-win test-update-signature
 	./build/device_aliases_test.exe
 	$(CXX) -std=c++17 -O2 -Wall -Wextra tests/alert_rules_test.cpp -o build/alert_rules_test.exe
 	./build/alert_rules_test.exe
+	$(CXX) -std=c++17 -O2 -Wall -Wextra tests/refresh_policy_test.cpp -o build/refresh_policy_test.exe
+	./build/refresh_policy_test.exe
 	$(CXX) -std=c++17 -O2 -Wall -Wextra tests/history_model_test.cpp -o build/history_model_test.exe
 	./build/history_model_test.exe
 	$(CXX) -std=c++17 -O2 -Wall -Wextra tests/runtime_estimate_test.cpp -o build/runtime_estimate_test.exe
@@ -66,8 +68,14 @@ test: test-update-core test-update-win test-update-signature
 	./build/astro_driver_test.exe
 	$(CXX) $(CXXFLAGS) tests/steelseries_mouse_test.cpp src/drivers/steelseries.cpp -o build/steelseries_mouse_test.exe
 	./build/steelseries_mouse_test.exe
+	$(CXX) $(CXXFLAGS) tests/pulsar_feinmann_test.cpp src/drivers/pulsar.cpp -o build/pulsar_feinmann_test.exe
+	./build/pulsar_feinmann_test.exe
+	$(CXX) $(CXXFLAGS) tests/razer_barracuda_chroma_test.cpp src/drivers/razer_headset.cpp -o build/razer_barracuda_chroma_test.exe
+	./build/razer_barracuda_chroma_test.exe
 	$(CXX) -std=c++17 -O2 -Wall tests/rapoo_protocol_test.cpp -o build/rapoo_protocol_test.exe
 	./build/rapoo_protocol_test.exe
+	$(CXX) -std=c++17 -O2 -Wall tests/sony_inzone_protocol_test.cpp -o build/sony_inzone_protocol_test.exe
+	./build/sony_inzone_protocol_test.exe
 	$(CXX) $(CXXFLAGS) tests/rapoo_driver_test.cpp src/drivers/rapoo.cpp -o build/rapoo_driver_test.exe
 	./build/rapoo_driver_test.exe
 	$(CXX) -std=c++17 -O2 -Wall tests/rawm_protocol_test.cpp -o build/rawm_protocol_test.exe
@@ -92,8 +100,14 @@ test: test-update-core test-update-win test-update-signature
 	./build/alienware_driver_test.exe
 	$(CXX) $(CXXFLAGS) tests/mchose_modern_driver_test.cpp src/drivers/mchose_modern.cpp -o build/mchose_modern_driver_test.exe
 	./build/mchose_modern_driver_test.exe
+	$(CXX) $(CXXFLAGS) tests/mchose_v9pro_driver_test.cpp src/drivers/mchose_v9pro.cpp -o build/mchose_v9pro_driver_test.exe
+	./build/mchose_v9pro_driver_test.exe
+	$(CXX) $(CXXFLAGS) tests/mchose_driver_test.cpp src/drivers/mchose.cpp -o build/mchose_driver_test.exe
+	./build/mchose_driver_test.exe
 	$(CXX) $(CXXFLAGS) tests/vgn_driver_test.cpp src/drivers/vgn.cpp -o build/vgn_driver_test.exe
 	./build/vgn_driver_test.exe
+	$(CXX) $(CXXFLAGS) tests/beiying_driver_test.cpp src/drivers/eweadn.cpp -o build/beiying_driver_test.exe
+	./build/beiying_driver_test.exe
 	$(CXX) $(CXXFLAGS) tests/vaxee_driver_test.cpp src/drivers/vaxee.cpp -o build/vaxee_driver_test.exe
 	./build/vaxee_driver_test.exe
 	$(CXX) $(CXXFLAGS) tests/finalmouse_driver_test.cpp src/drivers/finalmouse.cpp -o build/finalmouse_driver_test.exe
@@ -102,6 +116,10 @@ test: test-update-core test-update-win test-update-signature
 	./build/keychron_driver_test.exe
 	$(CXX) $(CXXFLAGS) tests/hyperx_haste_driver_test.cpp src/drivers/hyperx.cpp -o build/hyperx_haste_driver_test.exe
 	./build/hyperx_haste_driver_test.exe
+	$(CXX) $(CXXFLAGS) tests/hyperx_dart_driver_test.cpp src/drivers/hyperx.cpp -o build/hyperx_dart_driver_test.exe
+	./build/hyperx_dart_driver_test.exe
+	$(CXX) $(CXXFLAGS) tests/jbl_quantum810_driver_test.cpp src/drivers/jbl.cpp -o build/jbl_quantum810_driver_test.exe
+	./build/jbl_quantum810_driver_test.exe
 	$(CXX) $(CXXFLAGS) tests/hyperx_cloud_flight_s_driver_test.cpp src/drivers/hyperx.cpp -o build/hyperx_cloud_flight_s_driver_test.exe
 	./build/hyperx_cloud_flight_s_driver_test.exe
 	$(CXX) $(CXXFLAGS) tests/aula_sc580_test.cpp src/drivers/aula.cpp -o build/aula_sc580_test.exe
@@ -110,10 +128,16 @@ test: test-update-core test-update-win test-update-signature
 	./build/hyperx_stinger_driver_test.exe
 	$(CXX) -std=c++17 -O2 -Wall tests/galaxy_buds_protocol_test.cpp -o build/galaxy_buds_protocol_test.exe
 	./build/galaxy_buds_protocol_test.exe
+	$(CXX) -std=c++17 -O2 -Wall tests/sony_headphones_protocol_test.cpp -o build/sony_headphones_protocol_test.exe
+	./build/sony_headphones_protocol_test.exe
 	$(CXX) -std=c++17 -O2 -Wall tests/logitech_g435_0adf_test.cpp -o build/logitech_g435_0adf_test.exe
 	./build/logitech_g435_0adf_test.exe
 	$(CXX) -std=c++17 -O2 -Wall -Isrc tests/xenta_protocol_test.cpp src/drivers/xenta_protocol.cpp -o build/xenta_protocol_test.exe
 	./build/xenta_protocol_test.exe
+	$(CXX) -std=c++17 -O2 -Wall -Wextra tests/incott_protocol_test.cpp -o build/incott_protocol_test.exe
+	./build/incott_protocol_test.exe
+	$(CXX) $(CXXFLAGS) -Isrc tests/incott_driver_test.cpp src/drivers/misc_mice.cpp src/drivers/xenta_protocol.cpp -o build/incott_driver_test.exe
+	./build/incott_driver_test.exe
 	$(CXX) -std=c++17 -O2 -Wall tests/labels_test.cpp src/labels.cpp -o build/labels_test.exe
 	./build/labels_test.exe
 	$(CXX) $(CXXFLAGS) tests/brands_test.cpp src/brands.cpp -o build/brands_test.exe
@@ -122,6 +146,8 @@ test: test-update-core test-update-win test-update-signature
 	./build/xbox_bluetooth_identity_test.exe
 	$(CXX) $(CXXFLAGS) tests/jabra_driver_test.cpp src/drivers/jabra.cpp -o build/jabra_driver_test.exe
 	./build/jabra_driver_test.exe
+	$(CXX) $(CXXFLAGS) tests/pulsar_driver_test.cpp src/drivers/pulsar.cpp -o build/pulsar_driver_test.exe
+	./build/pulsar_driver_test.exe
 	$(CXX) -std=c++17 -O2 -Wall tests/gamesir_ble_protocol_test.cpp -o build/gamesir_ble_protocol_test.exe
 	./build/gamesir_ble_protocol_test.exe
 

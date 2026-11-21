@@ -10,6 +10,10 @@ charging = carregando
 asleep = em repouso
 No devices with battery info found = Nenhum dispositivo com informação de bateria encontrado
 Low battery = Bateria fraca
+Notify when charged to (saves the battery) = Avisar ao carregar até (poupa a bateria)
+Off = Desligado
+You can unplug it = Pode tirar do carregador
+{name} is charged to {percent}%. Stopping around here helps the battery last longer. = {name} está com {percent}%. Parar por aqui ajuda a bateria a durar mais.
 {name} is at {percent}% = {name} está com {percent}%
 Point at a device to show, hide or move it = Aponte para um dispositivo para mostrar, ocultar ou mover
 Show on the taskbar = Mostrar na barra de tarefas
@@ -201,7 +205,7 @@ BatteryHub is up to date. = O BatteryHub está atualizado.
 BatteryHub update = Atualização do BatteryHub
 BatteryHub will close briefly while the update is installed. = O BatteryHub será fechado brevemente enquanto a atualização é instalada.
 
-# Seelen UI integration (fork)
+# Seelen UI integration
 Seelen UI integration... = Integração com o Seelen UI...
 Show BatteryHub in Seelen toolbar = Mostrar o BatteryHub na barra do Seelen
 Seelen UI setup guide... = Guia de configuração do Seelen UI...
